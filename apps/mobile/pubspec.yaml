@@ -1,0 +1,57 @@
+name: school_safety_app
+description: School Safety Application with Weapon Detection
+publish_to: 'none'
+version: 1.0.0+1
+
+environment:
+  sdk: ^3.10.4
+
+dependencies:
+  flutter:
+    sdk: flutter
+  
+  # UI
+  cupertino_icons: ^1.0.8
+  google_fonts: ^6.1.0
+  flutter_svg: ^2.0.9
+  
+  # State Management
+  provider: ^6.1.1
+  
+  # Networking
+  http: ^1.1.2
+  socket_io_client: ^2.0.3+1
+  
+  # Storage
+  shared_preferences: ^2.2.2
+  
+  # Location
+  geolocator: ^11.0.0
+  google_maps_flutter: ^2.5.3
+  
+  # Camera & Media
+  camera: ^0.10.5+9
+  image_picker: ^1.0.7
+  
+  # Push Notifications
+  flutter_local_notifications: ^16.3.2
+  
+  # Utils
+  intl: ^0.19.0
+  url_launcher: ^6.2.4
+
+dev_dependencies:
+  flutter_test:
+    sdk: flutter
+  flutter_lints: ^6.0.0
+
+flutter:
+  uses-material-design: true
+  
+  assets:
+    - assets/images/
+    - assets/icons/
+  #         weight: 700
+  #
+  # For details regarding fonts from package dependencies,
+  # see https://flutter.dev/to/font-from-package

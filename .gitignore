@@ -1,0 +1,13 @@
+venv310/
+venv*/
+runs/
+logs/
+data/
+*.pt
+*.jpg
+*.png
+*.mp4
+*.tfevents.*
+.DS_Store
+.vscode/
+__pycache__/
