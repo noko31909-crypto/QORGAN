@@ -1,5 +1,5 @@
 import { io, Socket } from 'socket.io-client';
-import { SOCKET_URL } from './network';
+import { SOCKET_URL, WS_API_KEY } from './network';
 
 class SocketService {
   private socket: Socket | null = null;
@@ -11,6 +11,8 @@ class SocketService {
       timeout: 5000,
       reconnection: true,
       reconnectionAttempts: 5,
+      query: { apiKey: WS_API_KEY },
+      extraHeaders: { 'X-API-Key': WS_API_KEY },
     });
     return this.socket;
   }

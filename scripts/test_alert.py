@@ -1,6 +1,6 @@
 #!/usr/bin/env python3
 """
-Быстрый тест уведомлений об оружии
+Quick test for weapon alert notifications
 """
 import requests
 import json
@@ -8,7 +8,7 @@ import json
 API_URL = "http://127.0.0.1:5001/api"
 
 def test_weapon_alert():
-    """Отправляет тестовое уведомление об обнаружении оружия"""
+    """Sends a test weapon-detection notification"""
     print("Sending test weapon alert...")
     
     try:

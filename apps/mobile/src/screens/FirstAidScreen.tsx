@@ -9,7 +9,7 @@ export const FirstAidScreen = () => (
       <Text style={styles.tip}>Use the following guides to help someone in case of an emergency!</Text>
       <TextInput placeholder="Search a symptom/procedure" placeholderTextColor={Colors.muted} style={styles.search} />
       <View style={styles.grid}>
-        {['Control Bleeding', 'Dog Bite', 'Seizures', 'CPR (Heart Beating Stop)', 'Choking', 'Scot'].map((item) => (
+        {['Control Bleeding', 'Dog Bite', 'Seizures', 'CPR (Heart Beating Stop)', 'Choking', 'Burns'].map((item) => (
           <View key={item} style={styles.tile}><Text style={styles.item}>{item}</Text></View>
         ))}
       </View>

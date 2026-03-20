@@ -88,6 +88,6 @@ def detect_objects_and_plot(path_orig):
                 cv2.rectangle(image_orig, (int(xmin), int(ymin)), (int(xmax), int(ymax)), color, 2)
                 cv2.putText(image_orig, label, (int(xmin), int(ymin) - 10), cv2.FONT_HERSHEY_SIMPLEX, 0.5, color, 1, cv2.LINE_AA)
     
-    cv2.imshow("Teste", image_orig)
+    cv2.imshow("Test", image_orig)
     cv2.waitKey(0)
     cv2.destroyAllWindows()

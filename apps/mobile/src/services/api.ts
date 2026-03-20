@@ -99,11 +99,52 @@ class ApiService {
   }
 
   getCameras() { return this.request('/cameras', { auth: true }); }
-  getIncidents() { return this.request('/incidents', { auth: true }); }
+  getIncidents(params?: { status?: string; limit?: number }) {
+    const query = new URLSearchParams();
+    if (params?.status) query.set('status', params.status);
+    if (params?.limit) query.set('limit', String(params.limit));
+    const suffix = query.toString() ? `?${query.toString()}` : '';
+    return this.request(`/incidents${suffix}`, { auth: true });
+  }
   getNotifications() { return this.request('/notifications', { auth: true }); }
+  getMetricsSummary() { return this.request('/metrics/summary', { auth: true }); }
+  getMetricsTrends(days = 7) { return this.request(`/metrics/trends?days=${days}`, { auth: true }); }
+  getDetectionStatus() { return this.request('/detection/status', { auth: true }); }
 
   markNotificationRead(id: number) {
     return this.request(`/notifications/${id}/read`, { method: 'PUT', auth: true });
+  }
+
+  updateIncidentStatus(id: number, status: 'new' | 'acknowledged' | 'resolved') {
+    return this.request(`/incidents/${id}/status`, {
+      method: 'PUT',
+      auth: true,
+      body: JSON.stringify({ status }),
+    });
+  }
+
+  getIncidentTimeline(id: number) {
+    return this.request(`/incidents/${id}/timeline`, { auth: true });
+  }
+
+  getIncidentNotes(id: number) {
+    return this.request(`/incidents/${id}/notes`, { auth: true });
+  }
+
+  addIncidentNote(id: number, note: string) {
+    return this.request(`/incidents/${id}/notes`, {
+      method: 'POST',
+      auth: true,
+      body: JSON.stringify({ note }),
+    });
+  }
+
+  setFalsePositive(id: number, isFalsePositive: boolean) {
+    return this.request(`/incidents/${id}/false-positive`, {
+      method: 'PUT',
+      auth: true,
+      body: JSON.stringify({ is_false_positive: isFalsePositive }),
+    });
   }
 
   sendSOS(payload: { description?: string; location?: string; latitude?: number; longitude?: number; }) {

@@ -30,7 +30,9 @@ const normalizeBase = (url: string) => url.trim().replace(/\/$/, '');
 
 const envApiBase = process.env.EXPO_PUBLIC_API_BASE_URL;
 const envSocketBase = process.env.EXPO_PUBLIC_SOCKET_URL;
+const envWsApiKey = process.env.EXPO_PUBLIC_WS_API_KEY;
 const host = defaultHost();
 
 export const API_BASE_URL = normalizeBase(envApiBase || `http://${host}:5001/api`);
 export const SOCKET_URL = normalizeBase(envSocketBase || `http://${host}:5001`);
+export const WS_API_KEY = envWsApiKey || 'qorgan-demo-ws-key';

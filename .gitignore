@@ -1,5 +1,10 @@
 venv310/
 venv*/
+.venv/
+.venv*/
+.venv310_new/
+**/__pycache__/
+*.pyc
 runs/
 logs/
 data/
@@ -11,3 +16,4 @@ data/
 .DS_Store
 .vscode/
 __pycache__/
+.env

@@ -7,7 +7,7 @@ export const LessonsScreen = () => (
   <ScreenShell title="Lessons">
     <ScrollView style={styles.container} contentContainerStyle={{ padding: 16 }}>
       <Text style={styles.tip}>Use the following guides or lessons to learn how to act in dangerous situations.</Text>
-      <TextInput placeholder="" style={styles.search} />
+      <TextInput placeholder="Search lessons..." style={styles.search} />
       <View style={styles.list}>
         {['Fire Safety', 'Earthquake Preparedness', 'Lockdown Procedures', 'Emergency Exits', 'First Responder Contact', 'Basic First Aid'].map((item) => (
           <View key={item} style={styles.lesson}>

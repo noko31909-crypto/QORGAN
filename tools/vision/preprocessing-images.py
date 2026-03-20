@@ -36,7 +36,7 @@ def process_images_in_folder(input_folder, output_folder):
 
         output_path = os.path.join(output_folder, f'{image_file}')
         cv2.imwrite(output_path, original, [int(cv2.IMWRITE_JPEG_QUALITY), 20])
-        print(f"Detalhe horizontal da transformada wavelet salvo em {output_path}")
+        print(f"Wavelet horizontal detail saved to {output_path}")
 
 ROOT_DIR = Path(__file__).resolve().parents[2]
 

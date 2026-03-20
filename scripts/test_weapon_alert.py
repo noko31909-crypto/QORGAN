@@ -1,6 +1,6 @@
 #!/usr/bin/env python3
 """
-Скрипт для тестирования уведомлений об обнаружении оружия
+Script for testing weapon-detection notifications
 """
 import cv2
 import requests
@@ -14,13 +14,13 @@ sys.path.insert(0, str(BACKEND_DIR))
 
 from detection_service import DetectionService
 
-# Конфигурация
+# Configuration
 API_URL = "http://127.0.0.1:5001/api"
 TEST_IMAGE = str(ROOT_DIR / 'data' / 'results' / 'teste.jpg')
 MODEL_PATH = str(ROOT_DIR / 'models' / 'best.onnx')
 
 def test_detection_with_image():
-    """Тест детекции на существующем изображении"""
+    """Test detection on an existing image"""
     print("Loading YOLOv8 model...")
     detection_service = DetectionService(model_path=MODEL_PATH)
     
@@ -44,7 +44,7 @@ def test_detection_with_image():
         print("No weapon detected in image.")
 
 def test_api_status():
-    """Проверка статуса API"""
+    """Check API status"""
     print("\nChecking backend...")
     try:
         response = requests.get(f"{API_URL}/health", timeout=5)
@@ -64,10 +64,10 @@ if __name__ == "__main__":
     print("Test: weapon detection system")
     print("=" * 60)
     
-    # 1. Проверяем API
+    # 1. Check API
     test_api_status()
     
-    # 2. Тестируем детекцию
+    # 2. Test detection
     print("\n" + "="*60)
     test_detection_with_image()
     

@@ -57,12 +57,24 @@ export function AppNavigator() {
   const { setThreat } = useThreat();
 
   useEffect(() => {
+    if (!user) {
+      socketService.disconnect();
+      return;
+    }
+
     const unsubscribe = socketService.onWeaponAlert((data) => {
       setThreat(data);
       Alert.alert('Weapon detected', `${data.class_name || 'Threat'} at ${data.location || 'Unknown'}`);
     });
-    return () => unsubscribe();
-  }, [setThreat]);
+    const unsubscribeSos = socketService.onSosAlert((data) => {
+      Alert.alert('SOS alert', `Emergency reported at ${data.location || 'Unknown location'}`);
+    });
+
+    return () => {
+      unsubscribe();
+      unsubscribeSos();
+    };
+  }, [setThreat, user]);
 
   return (
     <Stack.Navigator screenOptions={{ headerStyle: { backgroundColor: Colors.primary }, headerTintColor: 'white', headerTitleStyle: { fontWeight: '700' } }}>

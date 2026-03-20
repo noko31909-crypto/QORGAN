@@ -1,5 +1,6 @@
 import React, { useCallback, useEffect, useState } from 'react';
 import { FlatList, Pressable, RefreshControl, StyleSheet, Text, View } from 'react-native';
+import { useFocusEffect } from '@react-navigation/native';
 import { api } from '../services/api';
 import { NotificationItem } from '../types';
 import { ScreenShell } from '../components/ScreenShell';
@@ -24,6 +25,11 @@ export const NotificationsScreen = () => {
   }, []);
 
   useEffect(() => { load(); }, [load]);
+  useFocusEffect(
+    useCallback(() => {
+      load();
+    }, [load]),
+  );
 
   const onRead = async (id: number) => {
     try {

@@ -24,6 +24,9 @@ class DetectionService:
         self.recent_detections = []
         self.max_recent_detections = 50
         self.camera_threads = {}
+        self.camera_stop_flags = {}
+        self._lock = threading.Lock()
+        self.demo_video = Path('data/demo/sample_school_video.mp4')
         
         # Create directory for saving detection images
         self.save_dir = Path(save_dir) if save_dir else Path('detection_images')
@@ -59,111 +62,143 @@ class DetectionService:
             camera_source: Camera source (0 for webcam, or RTSP URL)
             camera_location: Physical location of camera
         """
-        if camera_id in self.camera_threads:
-            print(f"Camera {camera_id} is already running")
-            return
-        
+        with self._lock:
+            if camera_id in self.camera_threads:
+                print(f"Camera {camera_id} is already running")
+                return
+            stop_event = threading.Event()
+            self.camera_stop_flags[camera_id] = stop_event
+
         thread = threading.Thread(
             target=self._detection_loop,
-            args=(camera_id, camera_source, camera_location),
+            args=(camera_id, camera_source, camera_location, stop_event),
             daemon=True
         )
         thread.start()
-        self.camera_threads[camera_id] = thread
+        with self._lock:
+            self.camera_threads[camera_id] = thread
         print(f"Started detection on camera {camera_id}")
     
     def stop_camera_detection(self, camera_id):
         """Stop detection on a specific camera"""
-        if camera_id in self.camera_threads:
-            del self.camera_threads[camera_id]
-            print(f"Stopped detection on camera {camera_id}")
+        with self._lock:
+            stop_event = self.camera_stop_flags.get(camera_id)
+            if stop_event is not None:
+                stop_event.set()
+            if camera_id in self.camera_threads:
+                del self.camera_threads[camera_id]
+            if camera_id in self.camera_stop_flags:
+                del self.camera_stop_flags[camera_id]
+        print(f"Stopped detection on camera {camera_id}")
     
-    def _detection_loop(self, camera_id, camera_source, camera_location):
-        """Main detection loop for a camera"""
+    def _open_capture(self, camera_source):
         cap = cv2.VideoCapture(camera_source)
+        if cap.isOpened():
+            return cap, str(camera_source)
+
+        # Demo fallback allows reliable competition demo without physical camera.
+        if self.demo_video.exists():
+            demo_cap = cv2.VideoCapture(str(self.demo_video))
+            if demo_cap.isOpened():
+                print(f"Using demo video fallback: {self.demo_video}")
+                return demo_cap, str(self.demo_video)
+
+        return cap, str(camera_source)
+
+    def _detection_loop(self, camera_id, camera_source, camera_location, stop_event):
+        """Main detection loop for a camera"""
+        cap, used_source = self._open_capture(camera_source)
         
         if not cap.isOpened():
             print(f"Error: Could not open camera {camera_id}")
             return
-        
-        self.is_running = True
+
+        print(f"Camera {camera_id} source: {used_source}")
         last_detection_time = 0
         detection_cooldown = 3  # seconds between alerts for same camera
-        
-        while camera_id in self.camera_threads:
-            ret, frame = cap.read()
-            if not ret:
-                print(f"Error reading frame from camera {camera_id}")
-                time.sleep(1)
-                continue
+
+        try:
+            self.is_running = True
+            while not stop_event.is_set():
+                ret, frame = cap.read()
+                if not ret:
+                    # Loop demo video for deterministic demo mode.
+                    cap.set(cv2.CAP_PROP_POS_FRAMES, 0)
+                    time.sleep(0.1)
+                    continue
             
-            # Run detection
-            results = self.model(frame, verbose=False)
+                # Run detection
+                results = self.model(frame, verbose=False)
             
-            current_time = time.time()
+                current_time = time.time()
             
-            for r in results:
-                if r.boxes is not None and len(r.boxes) > 0:
-                    boxes = r.boxes
+                for r in results:
+                    if r.boxes is not None and len(r.boxes) > 0:
+                        boxes = r.boxes
                     
-                    for box in boxes:
-                        confidence = float(box.conf[0])
+                        for box in boxes:
+                            confidence = float(box.conf[0])
                         
-                        if confidence >= self.confidence_threshold:
-                            # Cooldown check
-                            if current_time - last_detection_time < detection_cooldown:
-                                continue
+                            if confidence >= self.confidence_threshold:
+                                # Cooldown check
+                                if current_time - last_detection_time < detection_cooldown:
+                                    continue
                             
-                            class_id = int(box.cls[0])
-                            class_name = self._get_class_name(class_id)
+                                class_id = int(box.cls[0])
+                                class_name = self._get_class_name(class_id)
                             
-                            # Save detection image
-                            timestamp = datetime.now().strftime('%Y%m%d_%H%M%S')
-                            image_filename = f"{camera_id}_{timestamp}_{class_name}.jpg"
-                            image_path = self.save_dir / image_filename
+                                # Save detection image
+                                timestamp = datetime.now().strftime('%Y%m%d_%H%M%S')
+                                image_filename = f"{camera_id}_{timestamp}_{class_name}.jpg"
+                                image_path = self.save_dir / image_filename
                             
-                            # Draw box on frame
-                            annotated_frame = r.plot()
-                            cv2.imwrite(str(image_path), annotated_frame)
+                                # Draw box on frame
+                                annotated_frame = r.plot()
+                                cv2.imwrite(str(image_path), annotated_frame)
                             
-                            # Prepare detection data
-                            detection_data = {
-                                'camera_id': camera_id,
-                                'camera_location': camera_location,
-                                'class_name': class_name,
-                                'class_id': class_id,
-                                'confidence': confidence,
-                                'timestamp': datetime.now().isoformat(),
-                                'image_path': str(image_path),
-                                'bbox': box.xyxy[0].tolist()
-                            }
+                                # Prepare detection data
+                                detection_data = {
+                                    'camera_id': camera_id,
+                                    'camera_location': camera_location,
+                                    'class_name': class_name,
+                                    'class_id': class_id,
+                                    'confidence': confidence,
+                                    'timestamp': datetime.now().isoformat(),
+                                    'image_path': str(image_path),
+                                    'bbox': box.xyxy[0].tolist()
+                                }
                             
-                            # Add to recent detections
-                            self.recent_detections.append(detection_data)
-                            if len(self.recent_detections) > self.max_recent_detections:
-                                self.recent_detections.pop(0)
+                                # Add to recent detections
+                                with self._lock:
+                                    self.recent_detections.append(detection_data)
+                                    if len(self.recent_detections) > self.max_recent_detections:
+                                        self.recent_detections.pop(0)
                             
-                            # Call callback if set
-                            if self.detection_callback:
-                                try:
-                                    self.detection_callback(detection_data)
-                                except Exception as e:
-                                    print(f"Error in detection callback: {e}")
+                                # Call callback if set
+                                if self.detection_callback:
+                                    try:
+                                        self.detection_callback(detection_data)
+                                    except Exception as e:
+                                        print(f"Error in detection callback: {e}")
                             
-                            print(f"WEAPON DETECTED: {class_name} ({confidence:.2%}) at {camera_location}")
+                                print(f"WEAPON DETECTED: {class_name} ({confidence:.2%}) at {camera_location}")
                             
-                            last_detection_time = current_time
+                                last_detection_time = current_time
             
-            # Small delay to prevent CPU overload
-            time.sleep(0.1)
-        
-        cap.release()
-        self.is_running = False
-        print(f"Detection loop ended for camera {camera_id}")
+                # Small delay to prevent CPU overload
+                time.sleep(0.1)
+        finally:
+            cap.release()
+            with self._lock:
+                self.camera_threads.pop(camera_id, None)
+                self.camera_stop_flags.pop(camera_id, None)
+                self.is_running = len(self.camera_threads) > 0
+            print(f"Detection loop ended for camera {camera_id}")
     
     def get_recent_detections(self, limit=10):
         """Get recent detections"""
-        return self.recent_detections[-limit:]
+        with self._lock:
+            return self.recent_detections[-limit:]
     
     def detect_single_frame(self, frame):
         """

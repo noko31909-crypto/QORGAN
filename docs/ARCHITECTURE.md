@@ -58,6 +58,9 @@ Qorgan/
 **Основные маршруты:**  
 `POST /api/auth/register`, `POST /api/auth/login`, `GET /api/cameras`, `GET /api/incidents`, `POST /api/incidents/sos`, `GET /api/notifications`, `PUT /api/notifications/<id>/read`, `GET /api/health`, `POST /api/test/simulate-weapon-alert`.
 
+**Операционные маршруты (workflow/KPI):**
+`PUT /api/incidents/<id>/status` (только guard), `GET /api/incidents/<id>/timeline`, `GET /api/metrics/summary`.
+
 **События WebSocket:** `weapon_alert`, `sos_alert`.
 
 ---

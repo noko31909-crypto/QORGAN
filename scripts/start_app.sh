@@ -12,7 +12,7 @@ if lsof -Pi :5001 -sTCP:LISTEN -t >/dev/null ; then
 else
     echo "Starting Backend Server..."
     cd "$REPO_ROOT/apps/backend"
-    python3 app.py &
+    ENABLE_DETECTION=1 DEMO_SEED=1 python3 app.py &
     BACKEND_PID=$!
     echo "Backend started (PID: $BACKEND_PID)"
     cd "$REPO_ROOT"
