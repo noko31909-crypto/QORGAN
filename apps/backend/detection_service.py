@@ -43,6 +43,12 @@ class DetectionService:
     def set_detection_callback(self, callback):
         """Set callback function to be called when weapon is detected"""
         self.detection_callback = callback
+
+    def _get_class_name(self, class_id):
+        """Get class name by id; ONNX models may have model.names is None."""
+        if self.model.names is not None:
+            return self.model.names.get(class_id, f'class_{class_id}')
+        return f'class_{class_id}'
     
     def start_camera_detection(self, camera_id, camera_source, camera_location='Unknown'):
         """
@@ -109,7 +115,7 @@ class DetectionService:
                                 continue
                             
                             class_id = int(box.cls[0])
-                            class_name = self.model.names[class_id]
+                            class_name = self._get_class_name(class_id)
                             
                             # Save detection image
                             timestamp = datetime.now().strftime('%Y%m%d_%H%M%S')
@@ -144,7 +150,7 @@ class DetectionService:
                                 except Exception as e:
                                     print(f"Error in detection callback: {e}")
                             
-                            print(f"🚨 WEAPON DETECTED: {class_name} ({confidence:.2%}) at {camera_location}")
+                            print(f"WEAPON DETECTED: {class_name} ({confidence:.2%}) at {camera_location}")
                             
                             last_detection_time = current_time
             
@@ -179,7 +185,7 @@ class DetectionService:
                     if confidence >= self.confidence_threshold:
                         class_id = int(box.cls[0])
                         detections.append({
-                            'class_name': self.model.names[class_id],
+                            'class_name': self._get_class_name(class_id),
                             'class_id': class_id,
                             'confidence': confidence,
                             'bbox': box.xyxy[0].tolist()

@@ -5,8 +5,8 @@ from flask_sqlalchemy import SQLAlchemy
 from werkzeug.security import generate_password_hash, check_password_hash
 from datetime import datetime, timedelta
 from pathlib import Path
+import os
 import jwt
-from detection_service import DetectionService
 
 app = Flask(__name__)
 
@@ -27,11 +27,15 @@ CORS(app)
 socketio = SocketIO(app, cors_allowed_origins="*")
 db = SQLAlchemy(app)
 
-# Initialize detection service
-detection_service = DetectionService(
-    model_path=str(MODEL_PATH),
-    save_dir=str(DETECTION_IMAGES_DIR)
-)
+# Detection is optional in dev because some macOS Python/OpenCV builds crash on import.
+ENABLE_DETECTION = os.getenv('ENABLE_DETECTION', '0') == '1'
+detection_service = None
+if ENABLE_DETECTION:
+    from detection_service import DetectionService
+    detection_service = DetectionService(
+        model_path=str(MODEL_PATH),
+        save_dir=str(DETECTION_IMAGES_DIR)
+    )
 
 # Database Models
 class User(db.Model):
@@ -272,11 +276,20 @@ def mark_notification_read(notif_id):
     
     return jsonify({'error': 'Not found'}), 404
 
+@app.route('/api/health', methods=['GET'])
+def health():
+    """Проверка работы сервера (для скриптов и тестов)."""
+    return jsonify({
+        'status': 'ok',
+        'message': 'School Safety API is running',
+    })
+
 @app.route('/api/detection/status', methods=['GET'])
 def detection_status():
     return jsonify({
-        'is_running': detection_service.is_running,
-        'detections_count': len(detection_service.recent_detections)
+        'enabled': ENABLE_DETECTION and detection_service is not None,
+        'is_running': detection_service.is_running if detection_service else False,
+        'detections_count': len(detection_service.recent_detections) if detection_service else 0
     })
 
 # WebSocket Events
@@ -294,44 +307,43 @@ def handle_subscribe_camera(data):
     camera_id = data.get('camera_id')
     print(f'Client subscribed to camera {camera_id}')
 
-# Detection callback
+# Detection callback (runs in detection thread — must use app context)
 def on_weapon_detected(detection_data):
     """Called when weapon is detected"""
-    # Save to database
-    incident = Incident(
-        type='weapon_detected',
-        description=f"{detection_data['class_name']} detected",
-        location=detection_data.get('camera_location'),
-        confidence=detection_data['confidence'],
-        image_path=detection_data.get('image_path')
-    )
-    
-    db.session.add(incident)
-    db.session.commit()
-    
-    # Send real-time alert
-    socketio.emit('weapon_alert', {
-        'id': incident.id,
-        'class_name': detection_data['class_name'],
-        'confidence': detection_data['confidence'],
-        'location': detection_data.get('camera_location'),
-        'image_url': f'/api/images/{incident.id}',
-        'time': incident.created_at.isoformat()
-    }, namespace='/')
-    
-    # Create notifications for all guards
-    guards = User.query.filter_by(role='guard').all()
-    for guard in guards:
-        notification = Notification(
-            user_id=guard.id,
-            title='⚠️ Weapon Detected!',
-            message=f"{detection_data['class_name']} detected with {detection_data['confidence']:.0%} confidence",
-            type='alert',
-            icon='warning'
+    with app.app_context():
+        # Save to database
+        incident = Incident(
+            type='weapon_detected',
+            description=f"{detection_data['class_name']} detected",
+            location=detection_data.get('camera_location'),
+            confidence=detection_data['confidence'],
+            image_path=detection_data.get('image_path')
         )
-        db.session.add(notification)
-    
-    db.session.commit()
+        db.session.add(incident)
+        db.session.commit()
+
+        # Send real-time alert
+        socketio.emit('weapon_alert', {
+            'id': incident.id,
+            'class_name': detection_data['class_name'],
+            'confidence': detection_data['confidence'],
+            'location': detection_data.get('camera_location'),
+            'image_url': f'/api/images/{incident.id}',
+            'time': incident.created_at.isoformat()
+        }, namespace='/')
+
+        # Create notifications for all guards
+        guards = User.query.filter_by(role='guard').all()
+        for guard in guards:
+            notification = Notification(
+                user_id=guard.id,
+                title='Weapon detected',
+                message=f"{detection_data['class_name']} detected with {detection_data['confidence']:.0%} confidence",
+                type='alert',
+                icon='warning'
+            )
+            db.session.add(notification)
+        db.session.commit()
 
 # Test endpoint to simulate weapon detection
 @app.route('/api/test/simulate-weapon-alert', methods=['POST'])
@@ -366,10 +378,10 @@ def simulate_weapon_alert():
     for guard in guards:
         notification = Notification(
             user_id=guard.id,
-            title='🚨 Weapon Detected!',
+            title='Weapon detected',
             message=f'Detected at {incident.location}',
             type='weapon_alert',
-            icon='⚠️',
+            icon='warning',
             is_read=False
         )
         db.session.add(notification)
@@ -383,9 +395,10 @@ def simulate_weapon_alert():
     }), 201
 
 # Set detection callback
-detection_service.set_detection_callback(on_weapon_detected)
+if detection_service is not None:
+    detection_service.set_detection_callback(on_weapon_detected)
 
-# Initialize database
+# Initialize database and optionally start detection on cameras
 with app.app_context():
     db.create_all()
     
@@ -399,6 +412,24 @@ with app.app_context():
         )
         db.session.add(default_camera)
         db.session.commit()
+    
+    # Start weapon/knife detection on all active cameras (so app receives notifications)
+    if detection_service is not None:
+        try:
+            cameras = Camera.query.filter_by(is_active=True).all()
+            for cam in cameras:
+                source = int(cam.stream_url) if cam.stream_url and cam.stream_url.isdigit() else cam.stream_url or 0
+                detection_service.start_camera_detection(
+                    camera_id=str(cam.id),
+                    camera_source=source,
+                    camera_location=cam.location or cam.name or 'Unknown'
+                )
+            if cameras:
+                print(f'Detection started on {len(cameras)} camera(s)')
+        except Exception as e:
+            print(f'Detection auto-start skipped (model/camera not available): {e}')
+    else:
+        print('Detection disabled (set ENABLE_DETECTION=1 to enable).')
 
 if __name__ == '__main__':
-    socketio.run(app, host='0.0.0.0', port=5001, debug=True)
+    socketio.run(app, host='0.0.0.0', port=5001, debug=True, allow_unsafe_werkzeug=True)
