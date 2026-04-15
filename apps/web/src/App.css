@@ -1,0 +1,85 @@
+/* ── Reset & Mobile-first Shell ── */
+*, *::before, *::after {
+  box-sizing: border-box;
+  margin: 0;
+  padding: 0;
+}
+
+html, body, #root {
+  height: 100%;
+  width: 100%;
+  overflow: hidden;
+  font-family: 'Inter', -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif;
+  -webkit-font-smoothing: antialiased;
+  -moz-osx-font-smoothing: grayscale;
+  background: #ECEAF1;
+}
+
+/* Phone-frame wrapper — centres on desktop, fills on mobile */
+.app-shell {
+  max-width: 430px;
+  width: 100%;
+  height: 100%;
+  margin: 0 auto;
+  display: flex;
+  flex-direction: column;
+  background: #ECEAF1;
+  position: relative;
+  overflow: hidden;
+  box-shadow: 0 0 40px rgba(0,0,0,0.08);
+}
+
+.app-shell > .page-area {
+  flex: 1;
+  overflow: hidden;
+  display: flex;
+  flex-direction: column;
+}
+
+/* Spinner */
+.spinner {
+  width: 28px;
+  height: 28px;
+  border: 3px solid #E6E2EF;
+  border-top-color: #7B2CBF;
+  border-radius: 50%;
+  animation: spin 0.7s linear infinite;
+  margin: 0 auto;
+}
+
+@keyframes spin {
+  to { transform: rotate(360deg); }
+}
+
+/* Remove default button outline on tap */
+button, a {
+  -webkit-tap-highlight-color: transparent;
+  outline: none;
+}
+
+button:active {
+  opacity: 0.85;
+}
+
+/* Scrollbar — thin on mobile-like views */
+::-webkit-scrollbar {
+  width: 3px;
+}
+::-webkit-scrollbar-thumb {
+  background: #C4B8D4;
+  border-radius: 3px;
+}
+
+/* Safe area for notch devices */
+@supports (padding-top: env(safe-area-inset-top)) {
+  .app-shell {
+    padding-top: env(safe-area-inset-top);
+    padding-bottom: env(safe-area-inset-bottom);
+  }
+}
+
+/* Input focus styles */
+input:focus {
+  outline: 2px solid #7B2CBF;
+  outline-offset: -1px;
+}
