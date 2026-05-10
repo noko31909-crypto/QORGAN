@@ -1,195 +1,165 @@
-# Pitch Deck: Qorgan
+# Pitch Deck (Judge-Ready)
 
-Структура презентации в формате **pitch deck для стартапов** (инвесторы, акселераторы, гранты). 12–14 слайдов, логика: проблема → решение → рынок → продукт → бизнес → команда → ask.
-
----
-
-## Слайд 1 — Cover (Титульный)
-
-- **Qorgan**
-- Tagline: *Безопасность школы в реальном времени*
-- Одна строка: Детекция угроз с камер и мгновенные уведомления в одном приложении
-- Логотип (если есть) | Имя основателя/команды | Контакт
+This version is structured for high-scoring Technovation judging: specific, evidence-first, and non-generic.
 
 ---
 
-## Слайд 2 — Problem (Проблема)
-
-**Заголовок:** Школы не успевают реагировать на угрозы
-
-- Инциденты с оружием в учебных заведениях растут — реакция должна быть за **секунды**, не минуты
-- Охранники и администрация получают информацию с опозданием и из разных источников
-- Нет единой системы: «камера увидела → все узнали → есть карта и инструкции»
-- Родители и регуляторы требуют усиления мер безопасности
-
-*Опционально: 1 цифра (например, «среднее время реакции при инциденте — X минут» или рост числа инцидентов по региону/стране)*
+## Slide 1 - Title
+- Qorgan: School Emergency Response in Under 10 Seconds
+- Team name, country, contact
+- One-line value: "AI-assisted detection + guard workflow + real-time coordination"
 
 ---
 
-## Слайд 3 — Solution (Решение)
+## Slide 2 - Problem (with evidence)
+- In school emergencies, the first minute is critical.
+- Current process is fragmented: camera feed, phone calls, and manual reporting are disconnected.
+- Result: delayed acknowledgment, unclear ownership, and inconsistent response.
+- Add 1 local/regional safety statistic and source.
 
-**Заголовок:** Один продукт: от детекции до эвакуации
-
-- **Камеры видят угрозу** → нейросеть распознаёт оружие/нож в реальном времени  
-- **Все получают алерт за секунды** → охранники и ответственные в приложении  
-- **Карта и рекомендации под рукой** → точка угрозы, безопасные выходы, «Что делать?»
-
-Одна фраза внизу слайда: *«От обнаружения до уведомления — секунды, не минуты»*
+Judge check: if no source is shown, this slide is weak.
 
 ---
 
-## Слайд 4 — Market (Рынок)
+## Slide 3 - Users and Pain
+- Primary users: school guards and administrators.
+- Secondary users: teachers and students (for guidance/SOS only).
+- Pain points from interviews:
+  1) "I do not know if another guard already reacted."
+  2) "Alerts come from too many channels."
+  3) "There is no reliable timeline after incidents."
 
-**Заголовок:** Кто наш клиент и какой объём рынка
-
-- **Сегменты:** школы (государственные и частные), колледжи, университеты, объекты с режимом безопасности
-- **TAM/SAM/SAM** (подставьте свои цифры или оценочно):
-  - TAM: все учебные заведения + объекты с требованиями безопасности
-  - SAM: школы, готовые платить за систему безопасности (подписка или лицензия)
-  - SOM: пилот в одном регионе / 10–50 школ в первый год
-- **Драйверы:** ужесточение требований к безопасности, запрос родителей, госпрограммы «безопасная школа»
-
-*Можно заменить на один слайд «Why now?» — регуляторы, тренды, спрос.*
+Add interview count and date range on slide footer.
 
 ---
 
-## Слайд 5 — Product (Продукт)
-
-**Заголовок:** Qorgan — что внутри
-
-- **Детекция в реальном времени:** YOLO по видеопотоку с камер, алерт при уверенности ≥ 50%
-- **Мобильное приложение:** одна точка входа для охранников (алерты, камеры, уведомления) и учеников/учителей (SOS, карта, первая помощь)
-- **Карта эвакуации:** план школы, маркер угрозы, безопасные выходы, блок рекомендаций при инциденте
-- **SOS:** экстренный алерт с геолокацией в один тап
-
-Визуал: 2–4 скриншота приложения (главный экран, карта с угрозой, диалог алерта, уведомления)
+## Slide 4 - Solution
+- Camera event is analyzed by model.
+- If confidence threshold is met:
+  - incident is created,
+  - guards receive live alert,
+  - response status is tracked (new -> acknowledged -> resolved),
+  - timeline is stored for review.
+- Human-in-the-loop rule: AI suggests, guard confirms action.
 
 ---
 
-## Слайд 6 — How it works (Как это работает)
+## Slide 5 - Live Demo Flow
+- Show a 30-45 second end-to-end demo:
+  1) trigger event,
+  2) guard receives alert,
+  3) guard acknowledges,
+  4) incident appears in timeline.
+- Display measured times on screen:
+  - detection-to-alert latency,
+  - alert-to-acknowledge latency.
 
-**Заголовок:** От камеры до уведомления
-
-Схема в три блока:
-
-```
-[Камеры в школе]  →  [Сервер Qorgan + нейросеть]  →  [Приложение: алерт + карта]
-       (RTSP/IP)              (YOLO, детекция)              (охранники, учителя)
-```
-
-- Камера → сервер анализирует каждый кадр → при детекции оружия: инцидент в БД, WebSocket всем клиентам, уведомления охранникам
-- Развёртывание на своём сервере школы или в облаке — контроль данных у заказчика
+Judge check: timing proof beats feature lists.
 
 ---
 
-## Слайд 7 — Demo / Screenshots (Демо)
-
-**Заголовок:** Так это выглядит у пользователя
-
-- Коллаж или карусель: главный экран приложения, карта с маркером угрозы и «Что делать?», диалог «Оружие обнаружено», список уведомлений
-- Подпись: *Доступно на телефоне (iOS/Android) и в браузере*
-
-*Совет: на питче показать живое демо (симуляция алерта за 5 сек) или 30–60 сек видео*
-
----
-
-## Слайд 8 — Business Model (Бизнес-модель)
-
-**Заголовок:** Как мы зарабатываем
-
-Варианты (выберите один или комбинируйте):
-
-- **B2B подписка:** ежемесячная/годовая плата за школу (за количество камер или пользователей)
-- **Лицензия:** разовая установка + год поддержки и обновлений
-- **Гранты и госзаказы:** участие в программах «Безопасная школа», пилоты с департаментами образования
-
-Одна строка: *Монетизация через школы и образовательные организации, не через рекламу в приложении*
-
-*Цифры по цене продажи и себестоимости — в [BUSINESS_ESTIMATE.md](BUSINESS_ESTIMATE.md).*
+## Slide 6 - Technology and Why
+- Model: YOLO-based ONNX inference for practical real-time processing.
+- Backend: Flask + SocketIO for low-latency state updates.
+- Mobile: React Native for a single guard interface.
+- Why this stack:
+  - deployable in budget-limited schools,
+  - supports real-time event workflows,
+  - easy to pilot with existing camera infrastructure.
 
 ---
 
-## Слайд 9 — Traction & Roadmap (Прогресс и планы)
-
-**Заголовок:** Где мы сейчас и куда идём
-
-**Traction (уже есть):**
-- Рабочий MVP: бэкенд + приложение + детекция с камеры
-- Документация и сценарии тестирования
-- Готовность к пилоту в одной школе
-
-**Roadmap (6–12 месяцев):**
-- Пилот с 1–2 школами, сбор обратной связи
-- Масштабирование: несколько камер на школу, RTSP, дашборд для администрации
-- Расширение модели детекции (по запросу заказчиков)
-- Публикация в App Store / Google Play, сертификация для госзакупок (при необходимости)
+## Slide 7 - Validation and Iteration
+- What we tested:
+  - alert delivery reliability,
+  - acknowledgment workflow clarity,
+  - false-positive handling.
+- What changed after tests:
+  - global alert visibility across screens,
+  - notification persistence,
+  - incident timeline and notes.
+- Add one "before vs after" metric.
 
 ---
 
-## Слайд 10 — Competition (Конкуренция)
+## Slide 8 - Responsible AI and Safety
+- Data minimization and role-based access.
+- Retention policy and deletion process.
+- False-positive protocol (manual verification before escalation).
+- Accessibility support plan (readable alerts, clear language, high-contrast UI).
+- Bias risk statement and test plan by environment conditions.
 
-**Заголовок:** Чем мы отличаемся
-
-| Решение | Ограничение | Qorgan |
-|--------|-------------|--------|
-| Обычные камеры + человек | Реакция минуты, усталость оператора | Детекция в реальном времени, алерт за секунды |
-| Разрозненные системы (камера, СМС, карта) | Нет единого интерфейса | Одно приложение: алерт + карта + рекомендации + SOS |
-| Дорогие enterprise-решения | Высокий порог входа для школ | Простое развёртывание, понятный интерфейс, фокус на школы |
-
-Одна строка: *Мы делаем «умную» безопасность доступной для обычной школы.*
+Judge check: safety AI without ethics controls gets penalized.
 
 ---
 
-## Слайд 11 — Team (Команда)
+## Slide 9 - Market and Competition
+- Buyer: school administration/district safety office.
+- Alternatives:
+  1) camera + human monitoring only,
+  2) disconnected emergency tools,
+  3) expensive enterprise systems.
+- Qorgan differentiation:
+  - one workflow from detection to closure,
+  - affordable pilot path,
+  - guard-first response UX.
 
-**Заголовок:** Команда
-
-- Фото + имя + роль (например: основатель, разработка, продукт)
-- 1–2 строки про релевантный опыт: образование, предыдущие проекты, экспертиза в EdTech / безопасности
-- Если команда из одного человека: компетенции (full-stack, ML, продукт) и при необходимости планы по расширению
-
----
-
-## Слайд 12 — Ask (Просьба / Инвестиции)
-
-**Заголовок:** Что мы ищем сейчас
-
-Чётко сформулировать запрос:
-
-- **Для инвесторов:** раунд (pre-seed/seed), сумма, на что пойдут средства (пилот, команда, продукт)
-- **Для акселератора/гранта:** место в программе, менторство, доступ к школам-пилотам
-- **Для заказчика:** пилот в одной школе на N месяцев с последующим масштабированием
-
-Одна строка: *Следующий шаг — пилот в школе и первые платящие клиенты.*
+Use a named-competitor comparison if available.
 
 ---
 
-## Слайд 13 — Thank you / Contact
-
-**Заголовок:** Спасибо. Вопросы?
-
-- **Qorgan** — безопасность школы в реальном времени  
-- Имя | Email | Telegram | Сайт / репозиторий (по желанию)  
-- QR-код на приложение или на одностраничник (опционально)
-
----
-
-## Чеклист перед питчем
-
-| Что проверить | Статус |
-|---------------|--------|
-| Демо работает (бэкенд + приложение + симуляция алерта) | |
-| Видео-бэкап на 1–2 мин (если нет сети на питче) | |
-| Цифры по рынку (хотя бы оценочные TAM/SAM/SOM) | |
-| Одна ясная «ask» (деньги / акселератор / пилот) | |
-| Тайминг: 5–7 мин рассказ, 3–5 мин вопросы | |
+## Slide 10 - Business Model
+- B2B annual subscription per school, tiered by number of cameras.
+- Pilot strategy:
+  - low-risk pilot with clear success metrics,
+  - convert to annual plan on KPI achievement.
+- Revenue is institutional (no ads, no student monetization).
 
 ---
 
-## Советы по подаче
+## Slide 11 - Financial Reality
+- Show conservative assumptions:
+  - deployment/support cost per school,
+  - infrastructure cost per active school,
+  - expected sales cycle duration.
+- Include risk factors:
+  - procurement delays,
+  - compliance requirements,
+  - onboarding burden.
 
-1. **Начало:** проблема и решение — не больше 1 минуты. Инвестор должен сразу понять «что за боль и как вы её закрываете».
-2. **Демо:** живое уведомление (симуляция алерта) сильнее пяти слайдов про функции. Запустите всё до выхода на сцену.
-3. **Ask:** один конкретный запрос на один слайд. «Нужны 2 млн на пилот в 10 школ» лучше, чем «ищем партнёров и инвестиции».
-4. **Конкуренция:** не ругайте конкурентов — покажите таблицу «другие vs мы» и одну фразу про уникальность.
-5. **Тайминг:** если дают 5 минут — слайды 1, 2, 3, 5, 7, 12, 13. Остальное — в appendix или на вопросы.
+Judge check: optimistic margins without risk modeling are not credible.
+
+---
+
+## Slide 12 - Impact Goals (12 months)
+- Pilot schools onboarded.
+- p95 alert latency target.
+- p95 acknowledgment time target.
+- User trust score target from guard/admin surveys.
+- False-positive reduction target per model iteration.
+
+---
+
+## Slide 13 - Ask
+- Ask for one specific partnership:
+  - pilot with X schools for Y months.
+- Required support:
+  - school access,
+  - safety mentor review,
+  - operational feedback loop.
+- Pilot success criteria must be listed.
+
+---
+
+## Slide 14 - Closing
+- "Qorgan does not replace people. It gives schools faster, clearer coordination when seconds matter."
+- Contact and demo link.
+
+---
+
+## Final Pitch Checklist
+- One real statistic with source in problem slide.
+- One real user quote from interview evidence.
+- One timed demo with visible stopwatch.
+- One metric-driven ask.
+- One ethics slide with concrete controls.

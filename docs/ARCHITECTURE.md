@@ -14,15 +14,22 @@ Qorgan/
 │   │   ├── detection_service.py # YOLO детекция с камер
 │   │   ├── requirements.txt
 │   │   └── instance/            # SQLite (school_safety.db)
-│   └── mobile/                  # Flutter-приложение
-│       ├── lib/
-│       │   ├── main.dart
-│       │   ├── theme/
-│       │   ├── providers/       # AuthProvider, ThreatProvider
-│       │   ├── screens/         # auth, home (Live, SOS, Map, Notifications)
-│       │   └── services/        # api_service, socket_service
-│       ├── assets/images/       # карта школы: school_map.png
-│       └── pubspec.yaml
+│   └── mobile/                  # React Native (Expo) приложение
+│       ├── App.tsx              # точка входа
+│       ├── app.json             # конфиг Expo
+│       ├── tsconfig.json
+│       ├── package.json
+│       ├── assets/              # иконки, splash-screen
+│       └── src/
+│           ├── screens/         # LoginScreen, HomeScreen, SosScreen, MapScreen,
+│           │                    # NotificationsScreen, FirstAidScreen, LessonsScreen,
+│           │                    # SchoolSafetyScreen, WelcomeScreen, SplashScreen
+│           ├── context/         # AuthContext, ThreatContext
+│           ├── navigation/      # AppNavigator
+│           ├── services/        # api.ts, socket.ts, network.ts
+│           ├── components/      # ScreenShell и переиспользуемые компоненты
+│           ├── types.ts
+│           └── theme.ts
 ├── docs/                        # Документация
 │   ├── README.md                # Оглавление
 │   ├── ARCHITECTURE.md          # этот файл
@@ -32,13 +39,13 @@ Qorgan/
 ├── data/detection_images/       # Кадры с детекцией
 ├── scripts/
 │   ├── setup.sh                 # Установка зависимостей
-│   ├── start_app.sh             # Запуск backend + Flutter
+│   ├── start_app.sh             # Запуск backend + Expo
 │   ├── test_alert.py            # Симуляция алерта об оружии
 │   └── test_weapon_alert.py     # Тест детекции по одному изображению
 ├── tools/vision/                # Утилиты камера и детекция
 │   ├── camera_test.py          # Только камера + YOLO, окно с боксами (без бэкенда)
 │   ├── detecting-images.py     # Детекция по фото/видео (best.pt в data/runs/...)
-│   └── preprocessing-images.py # Препроцессинг (wavelet, контраст)
+│   └── preprocessing-images.py # Вспомогательный препроцессинг изображений
 ├── notebooks/                   # Jupyter (например graphs.ipynb)
 ├── data/
 │   ├── detection_images/       # Кадры с срабатываниями (бэкенд)
@@ -55,8 +62,10 @@ Qorgan/
 | **app.py** | Маршруты API (auth, cameras, incidents, notifications), WebSocket (weapon_alert, sos_alert), колбэк детекции → инцидент + уведомления охранникам. |
 | **detection_service.py** | Загрузка YOLO (best.onnx), цикл по кадрам с камеры, при срабатывании — вызов колбэка и сохранение кадра. |
 
+**Профиль учебных центров:** переменная `QORGAN_PROFILE=centers` — детекция по умолчанию включена, демо-данные выключены, подмена камеры демо-роликом запрещена без `ALLOW_DEMO_VIDEO_FALLBACK=1`; первая камера задаётся через `BOOTSTRAP_CAMERA_STREAM` или API. См. `apps/backend/.env.example`, `docs/PILOT_INSTALL.md`, Docker в корне репозитория.
+
 **Основные маршруты:**  
-`POST /api/auth/register`, `POST /api/auth/login`, `GET /api/cameras`, `GET /api/incidents`, `POST /api/incidents/sos`, `GET /api/notifications`, `PUT /api/notifications/<id>/read`, `GET /api/health`, `POST /api/test/simulate-weapon-alert`.
+`POST /api/auth/register`, `POST /api/auth/login`, `GET /api/cameras`, `GET /api/incidents`, `POST /api/incidents/sos`, `GET /api/notifications`, `PUT /api/notifications/<id>/read`, `GET /api/health`, `POST /api/test/simulate-weapon-alert` (в production отключён без `ALLOW_SIMULATE_WEAPON_ALERT=1`).
 
 **Операционные маршруты (workflow/KPI):**
 `PUT /api/incidents/<id>/status` (только guard), `GET /api/incidents/<id>/timeline`, `GET /api/metrics/summary`.
@@ -67,11 +76,13 @@ Qorgan/
 
 ## Mobile (apps/mobile)
 
+Стек: **React Native 0.83 + Expo SDK 55 + TypeScript**.
+
 | Область | Содержимое |
 |---------|------------|
 | **Экраны** | Splash → Welcome → Login/Register → Main (вкладки: Live, SOS, Map, Notifications). С главного экрана: School Safety (guard), First Aid, Lessons. |
-| **Провайдеры** | AuthProvider (токен, user), ThreatProvider (текущая угроза по weapon_alert для карты и рекомендаций). |
-| **Сервисы** | ApiService (HTTP к backend), SocketService (подписка на weapon_alert). |
+| **Контексты** | AuthContext (токен, user), ThreatContext (текущая угроза по weapon_alert для карты и рекомендаций). |
+| **Сервисы** | api.ts (HTTP к backend), socket.ts (WebSocket подписка на weapon_alert), network.ts (автоопределение IP хоста через Expo Constants). |
 
 **Карта школы:** изображение `assets/images/school_map.png` (план эвакуации), при угрозе — маркер и блок «Что делать? Рекомендации».
 
@@ -94,4 +105,4 @@ Qorgan/
 |------|------------|
 | **camera_test.py** | Тест только камеры и детекции: веб-камера → YOLO (`models/best.onnx`) → окно OpenCV с боксами. Запуск: `python3 tools/vision/camera_test.py`. Бэкенд не нужен. |
 | **detecting-images.py** | Детекция по фото/видео; использует свой путь к модели (например `data/runs/detect/.../best.pt`) и сохраняет в `data/results/`. |
-| **preprocessing-images.py** | Препроцессинг изображений (wavelet Haar/sym2/db2, контраст) для папки изображений. |
+| **preprocessing-images.py** | Вспомогательный препроцессинг изображений для подготовки данных. |

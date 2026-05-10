@@ -1,0 +1,23 @@
+# Учебные центры: один контейнер с API, WebSocket и детекцией.
+# Скопируйте apps/backend/.env.example → apps/backend/.env и заполните секреты, затем:
+#   docker compose up --build -d
+#
+# Камера: задайте BOOTSTRAP_CAMERA_STREAM (например 0 или rtsp://...) в .env
+
+services:
+  qorgan:
+    build: .
+    ports:
+      - "5001:5001"
+    env_file:
+      - ./apps/backend/.env
+    environment:
+      QORGAN_PROFILE: centers
+      APP_ENV: production
+    volumes:
+      - qorgan-db:/app/apps/backend/instance
+      - qorgan-detections:/app/data/detection_images
+
+volumes:
+  qorgan-db:
+  qorgan-detections:

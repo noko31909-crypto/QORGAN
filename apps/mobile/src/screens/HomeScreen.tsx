@@ -1,35 +1,37 @@
-import React, { useCallback, useState } from 'react';
-import { View, Text, Pressable, StyleSheet } from 'react-native';
+import React, { useCallback, useEffect, useState } from 'react';
+import { ActivityIndicator, RefreshControl, ScrollView, StyleSheet, Text, View } from 'react-native';
+import { Ionicons } from '@expo/vector-icons';
 import { useFocusEffect } from '@react-navigation/native';
-import { useAuth } from '../context/AuthContext';
 import { ScreenShell } from '../components/ScreenShell';
 import { api } from '../services/api';
-import { DetectionStatus, Incident, MetricsSummary, MetricsTrendPoint } from '../types';
-import { Colors } from '../theme';
+import { DetectionStatus, Incident, MetricsSummary } from '../types';
+import { Colors, Radius } from '../theme';
+import { socketService } from '../services/socket';
+import { timeAgo } from '../utils/time';
+import { useAuth } from '../context/AuthContext';
 
-export const HomeScreen = ({ navigation }: any) => {
-  const { user, logout } = useAuth();
+export const HomeScreen = () => {
+  const { user } = useAuth();
   const [summary, setSummary] = useState<MetricsSummary | null>(null);
-  const [latestIncident, setLatestIncident] = useState<Incident | null>(null);
-  const [detectionStatus, setDetectionStatus] = useState<DetectionStatus | null>(null);
-  const [trends, setTrends] = useState<MetricsTrendPoint[]>([]);
-  const [errorText, setErrorText] = useState('');
+  const [detection, setDetection] = useState<DetectionStatus | null>(null);
+  const [incidents, setIncidents] = useState<Incident[]>([]);
+  const [loading, setLoading] = useState(false);
 
   const load = useCallback(async () => {
+    setLoading(true);
     try {
-      const [summaryData, incidents, detection, trendData] = await Promise.all([
+      const [s, d, i] = await Promise.all([
         api.getMetricsSummary(),
-        api.getIncidents({ limit: 1 }),
         api.getDetectionStatus(),
-        api.getMetricsTrends(7),
+        api.getIncidents({ limit: 5 }),
       ]);
-      setSummary(summaryData);
-      setLatestIncident(incidents?.[0] || null);
-      setDetectionStatus(detection);
-      setTrends(trendData?.series || []);
-      setErrorText('');
-    } catch (e: any) {
-      setErrorText(e?.message || 'Failed to load dashboard.');
+      setSummary(s);
+      setDetection(d);
+      setIncidents(i);
+    } catch {
+      // tolerant
+    } finally {
+      setLoading(false);
     }
   }, []);
 
@@ -39,74 +41,132 @@ export const HomeScreen = ({ navigation }: any) => {
     }, [load]),
   );
 
+  useEffect(() => {
+    const unsub = socketService.onWeaponAlert(() => load());
+    return unsub;
+  }, [load]);
+
   return (
-    <ScreenShell title="School Safety">
-      <View style={styles.container}>
-        <Text style={styles.subtitle}>Guard mode: {user?.role}</Text>
-        {!!errorText && <Text style={styles.error}>{errorText}</Text>}
+    <ScreenShell title="Live">
+      <ScrollView
+        style={styles.container}
+        contentContainerStyle={styles.content}
+        refreshControl={<RefreshControl refreshing={loading} onRefresh={load} />}
+      >
+        <Text style={styles.subtitle}>
+          {user?.role === 'guard' ? 'Guard dashboard' : 'Student live feed'}
+        </Text>
+
+        {loading && <ActivityIndicator color={Colors.primary} style={{ marginVertical: 8 }} />}
+
         <View style={styles.statsRow}>
-          <View style={styles.statCard}>
-            <Text style={styles.statValue}>{summary?.incidents.open ?? '-'}</Text>
-            <Text style={styles.statLabel}>Open incidents</Text>
-          </View>
-          <View style={styles.statCard}>
-            <Text style={styles.statValue}>{summary?.notifications.unread ?? '-'}</Text>
-            <Text style={styles.statLabel}>Unread alerts</Text>
-          </View>
+          <StatCard label="Open incidents" value={summary?.incidents.open ?? '—'} />
+          <StatCard label="Unread alerts" value={summary?.notifications.unread ?? '—'} />
         </View>
-        <View style={styles.statusCard}>
-          <Text style={styles.statusTitle}>Detection service</Text>
-          <Text style={styles.statusText}>
-            {detectionStatus
-              ? `${detectionStatus.enabled ? 'Enabled' : 'Disabled'} • ${detectionStatus.is_running ? 'Running' : 'Idle'}`
-              : 'Loading...'}
-          </Text>
+
+        <View style={styles.detectionCard}>
+          <View style={styles.detectionRow}>
+            <Ionicons
+              name={detection?.is_running ? 'pulse' : 'pause-circle'}
+              size={22}
+              color={Colors.accent}
+            />
+            <Text style={styles.detectionTitle}>
+              AI Detection · {detection?.is_running ? 'Running' : 'Idle'}
+            </Text>
+          </View>
           {!!summary && (
-            <Text style={styles.statusText}>
-              False positive rate: {summary.incidents.false_positive_rate_pct}%
-            </Text>
-          )}
-          {!!latestIncident && (
-            <Text style={styles.statusText}>
-              Last event: {latestIncident.type} at {latestIncident.location || 'Unknown'}
+            <Text style={styles.detectionSub}>
+              False-positive rate: {summary.incidents.false_positive_rate_pct}% ·{' '}
+              {summary.incidents.total} total events
             </Text>
           )}
         </View>
-        <View style={styles.statusCard}>
-          <Text style={styles.statusTitle}>Weekly detection trend</Text>
-          {trends.length === 0 ? (
-            <Text style={styles.statusText}>No trend data yet.</Text>
-          ) : (
-            trends.map((point) => (
-              <Text key={point.date} style={styles.statusText}>
-                {point.date}: {point.total_detections} detections ({point.false_positives} FP)
-              </Text>
-            ))
-          )}
-        </View>
-        {user?.role === 'guard' && (
-          <Pressable style={styles.card} onPress={() => navigation.navigate('SchoolSafety')}><Text style={styles.cardText}>CCTV and school dashboard</Text></Pressable>
+
+        <Text style={styles.sectionTitle}>Recent incidents</Text>
+        {incidents.length === 0 ? (
+          <Text style={styles.empty}>No incidents reported.</Text>
+        ) : (
+          incidents.map((inc) => (
+            <View key={inc.id} style={styles.incidentCard}>
+              <View style={styles.incidentIcon}>
+                <Ionicons
+                  name={inc.type === 'weapon_detected' ? 'warning' : 'alert-circle'}
+                  size={18}
+                  color={Colors.white}
+                />
+              </View>
+              <View style={{ flex: 1 }}>
+                <Text style={styles.incidentTitle}>
+                  {inc.type.replace('_', ' ').toUpperCase()}
+                </Text>
+                <Text style={styles.incidentSub}>
+                  {inc.location || 'Unknown'} · {timeAgo(inc.created_at)}
+                </Text>
+              </View>
+              {inc.confidence != null && (
+                <Text style={styles.confidence}>{Math.round(inc.confidence * 100)}%</Text>
+              )}
+            </View>
+          ))
         )}
-        <Pressable style={styles.card} onPress={() => navigation.navigate('FirstAid')}><Text style={styles.cardText}>First Aid guides</Text></Pressable>
-        <Pressable style={styles.card} onPress={() => navigation.navigate('Lessons')}><Text style={styles.cardText}>Lessons and emergency training</Text></Pressable>
-        <Pressable style={styles.alert} onPress={logout}><Text style={styles.cardText}>Log out</Text></Pressable>
-      </View>
+      </ScrollView>
     </ScreenShell>
   );
 };
 
+const StatCard = ({ label, value }: { label: string; value: number | string }) => (
+  <View style={styles.statCard}>
+    <Text style={styles.statValue}>{value}</Text>
+    <Text style={styles.statLabel}>{label}</Text>
+  </View>
+);
+
 const styles = StyleSheet.create({
-  container: { flex: 1, padding: 18 },
-  subtitle: { color: Colors.muted, marginBottom: 14, fontWeight: '600' },
-  error: { color: '#B00020', marginBottom: 8, fontWeight: '600' },
-  statsRow: { flexDirection: 'row', gap: 10, marginBottom: 10 },
-  statCard: { flex: 1, backgroundColor: '#FFFFFF', borderRadius: 12, padding: 12, borderWidth: 1, borderColor: Colors.border },
-  statValue: { color: Colors.primary, fontWeight: '800', fontSize: 24 },
-  statLabel: { color: Colors.muted, marginTop: 2, fontSize: 12, fontWeight: '600' },
-  statusCard: { backgroundColor: '#FFFFFF', borderRadius: 12, padding: 12, borderWidth: 1, borderColor: Colors.border, marginBottom: 10 },
-  statusTitle: { color: Colors.text, fontWeight: '700', marginBottom: 2 },
-  statusText: { color: '#4A4A56', fontSize: 12 },
-  card: { backgroundColor: Colors.primary, padding: 16, borderRadius: 12, marginBottom: 10 },
-  alert: { backgroundColor: '#9155C4', padding: 16, borderRadius: 12, marginTop: 14 },
-  cardText: { color: '#fff', fontWeight: '700' },
+  container: { flex: 1 },
+  content: { padding: 18, paddingBottom: 30 },
+  subtitle: { color: Colors.muted, fontWeight: '600', marginBottom: 12 },
+  statsRow: { flexDirection: 'row', gap: 10, marginBottom: 12 },
+  statCard: {
+    flex: 1,
+    backgroundColor: Colors.primary,
+    borderRadius: Radius.md,
+    padding: 14,
+  },
+  statValue: { color: Colors.accent, fontSize: 26, fontWeight: '800' },
+  statLabel: { color: Colors.white, fontSize: 12, fontWeight: '600', marginTop: 2 },
+  detectionCard: {
+    backgroundColor: Colors.primary,
+    borderRadius: Radius.md,
+    padding: 14,
+    gap: 6,
+    marginBottom: 16,
+  },
+  detectionRow: { flexDirection: 'row', alignItems: 'center', gap: 8 },
+  detectionTitle: { color: Colors.white, fontWeight: '700', fontSize: 14 },
+  detectionSub: { color: '#E7D8FF', fontSize: 12 },
+  sectionTitle: { color: Colors.text, fontWeight: '800', fontSize: 15, marginBottom: 8 },
+  empty: { color: Colors.muted, fontStyle: 'italic' },
+  incidentCard: {
+    backgroundColor: Colors.white,
+    borderRadius: Radius.md,
+    padding: 12,
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 10,
+    marginBottom: 8,
+    borderWidth: 1,
+    borderColor: Colors.border,
+  },
+  incidentIcon: {
+    width: 34,
+    height: 34,
+    borderRadius: 17,
+    backgroundColor: Colors.danger,
+    alignItems: 'center',
+    justifyContent: 'center',
+  },
+  incidentTitle: { color: Colors.text, fontWeight: '800', fontSize: 13 },
+  incidentSub: { color: Colors.muted, fontSize: 12, marginTop: 2 },
+  confidence: { color: Colors.primary, fontWeight: '800', fontSize: 12 },
 });

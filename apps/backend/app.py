@@ -20,20 +20,49 @@ BACKEND_DIR = Path(__file__).resolve().parent
 INSTANCE_DIR = BACKEND_DIR / 'instance'
 INSTANCE_DIR.mkdir(parents=True, exist_ok=True)
 
-MODEL_PATH = BASE_DIR / 'models' / 'best.onnx'
 DETECTION_IMAGES_DIR = BASE_DIR / 'data' / 'detection_images'
+DETECTION_IMAGES_DIR.mkdir(parents=True, exist_ok=True)
 DB_PATH = INSTANCE_DIR / 'school_safety.db'
 
 app.config['SECRET_KEY'] = os.getenv('SECRET_KEY', 'dev-insecure-key-change-me')
 app.config['SQLALCHEMY_DATABASE_URI'] = f"sqlite:///{DB_PATH}"
 app.config['SQLALCHEMY_TRACK_MODIFICATIONS'] = False
 APP_ENV = os.getenv('APP_ENV', 'development').lower()
+
+
+def _env_bool(key: str, default: bool) -> bool:
+    val = os.getenv(key)
+    if val is None or str(val).strip() == '':
+        return default
+    return str(val).strip().lower() in ('1', 'true', 'yes', 'on')
+
+
+# QORGAN_PROFILE=centers — учебные центры: детекция по умолчанию вкл., демо выкл., без подмены камеры демо-роликом.
+QORGAN_PROFILE = (os.getenv('QORGAN_PROFILE', '') or '').strip().lower()
+CENTERS_DEPLOY = QORGAN_PROFILE in ('centers', 'training', 'center')
+
+if CENTERS_DEPLOY:
+    ENABLE_DETECTION = _env_bool('ENABLE_DETECTION', True)
+    DEMO_SEED = _env_bool('DEMO_SEED', False)
+else:
+    ENABLE_DETECTION = _env_bool('ENABLE_DETECTION', False)
+    DEMO_SEED = _env_bool('DEMO_SEED', True)
+
+_model_override = (os.getenv('MODEL_PATH', '') or '').strip()
+MODEL_PATH = Path(_model_override).resolve() if _model_override else (BASE_DIR / 'models' / 'best.onnx')
+
+if APP_ENV == 'production' or CENTERS_DEPLOY:
+    ALLOW_DEMO_VIDEO_FALLBACK = _env_bool('ALLOW_DEMO_VIDEO_FALLBACK', False)
+else:
+    ALLOW_DEMO_VIDEO_FALLBACK = _env_bool('ALLOW_DEMO_VIDEO_FALLBACK', True)
+
+DEFAULT_SCHOOL_CODE = (os.getenv('DEFAULT_SCHOOL_CODE', '') or 'SCH-1234').strip()
 WS_API_KEY = os.getenv('WS_API_KEY', 'qorgan-demo-ws-key')
 raw_cors_origins = os.getenv('CORS_ALLOWED_ORIGINS', '').strip()
 if raw_cors_origins:
     ALLOWED_ORIGINS = [o.strip() for o in raw_cors_origins.split(',') if o.strip()]
 elif APP_ENV == 'production':
-    ALLOWED_ORIGINS = ['http://localhost:19006']
+    raise RuntimeError('In production, CORS_ALLOWED_ORIGINS must be set explicitly.')
 else:
     # In dev Expo web frequently changes port, so allow all origins unless explicitly configured.
     ALLOWED_ORIGINS = '*'
@@ -44,6 +73,7 @@ db = SQLAlchemy(app)
 
 rate_lock = Lock()
 request_buckets = defaultdict(list)
+video_feed_last_alert = {}  # per-camera cooldown for video_feed detections
 
 
 def rate_limit(limit: int, window_seconds: int):
@@ -84,15 +114,18 @@ if APP_ENV == 'production' and (
 ):
     raise RuntimeError('In production, SECRET_KEY must be custom and at least 32 characters long.')
 
-# Detection is optional in dev because some macOS Python/OpenCV builds crash on import.
-ENABLE_DETECTION = os.getenv('ENABLE_DETECTION', '0') == '1'
-DEMO_SEED = os.getenv('DEMO_SEED', '1') == '1'
 detection_service = None
 if ENABLE_DETECTION:
     from detection_service import DetectionService
     detection_service = DetectionService(
         model_path=str(MODEL_PATH),
-        save_dir=str(DETECTION_IMAGES_DIR)
+        confidence_threshold=float(os.getenv('CONFIDENCE_THRESHOLD', '0.35')),
+        save_dir=str(DETECTION_IMAGES_DIR),
+        persistence_frames=int(os.getenv('PERSISTENCE_FRAMES', '1')),
+        alert_cooldown_seconds=float(os.getenv('ALERT_COOLDOWN_SECONDS', '10')),
+        min_bbox_area_ratio=float(os.getenv('MIN_BBOX_AREA_RATIO', '0.001')),
+        max_bbox_area_ratio=float(os.getenv('MAX_BBOX_AREA_RATIO', '0.95')),
+        allow_demo_video_fallback=ALLOW_DEMO_VIDEO_FALLBACK,
     )
 
 # Database Models
@@ -109,6 +142,7 @@ class User(db.Model):
 class Incident(db.Model):
     id = db.Column(db.Integer, primary_key=True)
     type = db.Column(db.String(50), nullable=False)  # 'weapon_detected', 'sos_alert'
+    school_code = db.Column(db.String(50), nullable=True)
     description = db.Column(db.Text)
     location = db.Column(db.String(255))
     latitude = db.Column(db.Float)
@@ -144,6 +178,19 @@ class Notification(db.Model):
     type = db.Column(db.String(50))  # 'reminder', 'update', 'alert', 'transaction'
     icon = db.Column(db.String(50))
     is_read = db.Column(db.Boolean, default=False)
+    created_at = db.Column(db.DateTime, default=datetime.utcnow)
+
+
+class DetectionAudit(db.Model):
+    id = db.Column(db.Integer, primary_key=True)
+    school_code = db.Column(db.String(50), nullable=True)
+    camera_location = db.Column(db.String(255), nullable=True)
+    class_name = db.Column(db.String(64), nullable=False)
+    confidence = db.Column(db.Float, nullable=False)
+    created_incident = db.Column(db.Boolean, default=False)
+    incident_id = db.Column(db.Integer, db.ForeignKey('incident.id'), nullable=True)
+    notifications_sent = db.Column(db.Integer, default=0)
+    reason = db.Column(db.String(64), nullable=True)
     created_at = db.Column(db.DateTime, default=datetime.utcnow)
 
 class Camera(db.Model):
@@ -192,16 +239,16 @@ def seed_demo_data():
             email='demo.guard@qorgan.local',
             password=generate_password_hash('DemoPass123'),
             role='guard',
-            school_code='SCH-1234',
+            school_code=DEFAULT_SCHOOL_CODE,
         )
         db.session.add(guard)
         db.session.commit()
 
-    now = datetime.utcnow()
+    now = datetime.now(timezone.utc).replace(tzinfo=None)
     seed_rows = [
-        Incident(type='weapon_detected', description='Demo: knife-like object in hallway', location='Main Hall', confidence=0.86, status='acknowledged', created_at=now - timedelta(days=2), reported_by=guard.id),
-        Incident(type='sos_alert', description='Demo: SOS test from mobile app', location='Classroom 8', status='resolved', created_at=now - timedelta(days=1), reported_by=guard.id),
-        Incident(type='weapon_detected', description='Demo: possible threat near entrance', location='Main Entrance', confidence=0.91, status='new', created_at=now - timedelta(hours=3), reported_by=guard.id),
+        Incident(type='weapon_detected', school_code=DEFAULT_SCHOOL_CODE, description='Demo: knife-like object in hallway', location='Main Hall', confidence=0.86, status='acknowledged', created_at=now - timedelta(days=2), reported_by=guard.id),
+        Incident(type='sos_alert', school_code=DEFAULT_SCHOOL_CODE, description='Demo: SOS test from mobile app', location='Classroom 8', status='resolved', created_at=now - timedelta(days=1), reported_by=guard.id),
+        Incident(type='weapon_detected', school_code=DEFAULT_SCHOOL_CODE, description='Demo: possible threat near entrance', location='Main Entrance', confidence=0.91, status='new', created_at=now - timedelta(hours=3), reported_by=guard.id),
     ]
     db.session.add_all(seed_rows)
     db.session.commit()
@@ -230,7 +277,7 @@ def verify_token(token):
     try:
         payload = jwt.decode(token, app.config['SECRET_KEY'], algorithms=['HS256'])
         return payload['user_id']
-    except:
+    except (jwt.InvalidTokenError, KeyError, TypeError):
         return None
 
 # Routes
@@ -395,6 +442,9 @@ def _open_stream_with_fallback(stream_source):
     if capture.isOpened():
         return capture, False
 
+    if not ALLOW_DEMO_VIDEO_FALLBACK:
+        return capture, False
+
     fallback = BASE_DIR / 'data' / 'demo' / 'sample_school_video.mp4'
     fallback_capture = cv2.VideoCapture(str(fallback))
     if fallback_capture.isOpened():
@@ -454,10 +504,12 @@ def video_feed(camera_id):
 
                         x1, y1, x2, y2 = [int(v) for v in bbox]
                         label = det.get('class_name', 'weapon')
-                        confidence_pct = int(round(float(det.get('confidence', 0.0)) * 100))
+                        conf = float(det.get('confidence', 0.0))
+                        confidence_pct = int(round(conf * 100))
                         caption = f'{label} {confidence_pct}%'
 
                         cv2.rectangle(frame, (x1, y1), (x2, y2), (0, 0, 255), 2)
+                        # Annotation only — incident creation handled by _detection_loop
                         cv2.putText(
                             frame,
                             caption,
@@ -495,7 +547,7 @@ def get_incidents():
     status = request.args.get('status')
     limit = min(int(request.args.get('limit', 50)), 200)
 
-    query = Incident.query.order_by(Incident.created_at.desc())
+    query = Incident.query.filter_by(school_code=user.school_code).order_by(Incident.created_at.desc())
     if status:
         query = query.filter_by(status=status)
 
@@ -715,10 +767,18 @@ def mark_notification_read(notif_id):
 def health():
     """Server health check endpoint (for scripts and tests)."""
     key_len = len(app.config['SECRET_KEY'])
+    model_ok = MODEL_PATH.is_file()
     return jsonify({
         'status': 'ok',
         'message': 'School Safety API is running',
         'env': APP_ENV,
+        'profile': QORGAN_PROFILE or 'default',
+        'centers_deploy': CENTERS_DEPLOY,
+        'detection': {
+            'enabled': bool(ENABLE_DETECTION and detection_service is not None),
+            'model_path': str(MODEL_PATH),
+            'model_file_present': model_ok,
+        },
         'security': {
             'secret_key_configured': app.config['SECRET_KEY'] != 'dev-insecure-key-change-me',
             'secret_key_length': key_len,
@@ -734,11 +794,11 @@ def metrics_summary():
     if not user:
         return jsonify({'error': 'Unauthorized'}), 401
 
-    total_incidents = Incident.query.count()
-    open_incidents = Incident.query.filter(Incident.status.in_(['active', 'new', 'acknowledged'])).count()
-    resolved_incidents = Incident.query.filter_by(status='resolved').count()
-    weapon_incidents = Incident.query.filter_by(type='weapon_detected').count()
-    sos_incidents = Incident.query.filter_by(type='sos_alert').count()
+    total_incidents = Incident.query.filter_by(school_code=user.school_code).count()
+    open_incidents = Incident.query.filter_by(school_code=user.school_code).filter(Incident.status.in_(['active', 'new', 'acknowledged'])).count()
+    resolved_incidents = Incident.query.filter_by(school_code=user.school_code, status='resolved').count()
+    weapon_incidents = Incident.query.filter_by(school_code=user.school_code, type='weapon_detected').count()
+    sos_incidents = Incident.query.filter_by(school_code=user.school_code, type='sos_alert').count()
 
     user_notifications_total = Notification.query.filter_by(user_id=user.id).count()
     user_notifications_unread = Notification.query.filter_by(user_id=user.id, is_read=False).count()
@@ -757,7 +817,7 @@ def metrics_summary():
         p95_index = max(0, int(len(sorted_latencies) * 0.95) - 1)
         ack_p95_seconds = round(sorted_latencies[p95_index], 2)
 
-    false_positives = Incident.query.filter_by(is_false_positive=True).count()
+    false_positives = Incident.query.filter_by(school_code=user.school_code, is_false_positive=True).count()
     false_positive_rate = round((false_positives / total_incidents) * 100, 2) if total_incidents else 0.0
 
     return jsonify({
@@ -790,13 +850,13 @@ def metrics_trends():
         return jsonify({'error': 'Unauthorized'}), 401
 
     days = min(max(int(request.args.get('days', 7)), 1), 30)
-    now = datetime.utcnow()
+    now = datetime.now(timezone.utc).replace(tzinfo=None)
 
     series = []
     for d in range(days - 1, -1, -1):
         day_start = datetime(now.year, now.month, now.day) - timedelta(days=d)
         day_end = day_start + timedelta(days=1)
-        incidents = Incident.query.filter(Incident.created_at >= day_start, Incident.created_at < day_end).all()
+        incidents = Incident.query.filter(Incident.school_code == user.school_code, Incident.created_at >= day_start, Incident.created_at < day_end).all()
         total = len(incidents)
         false_pos = len([i for i in incidents if i.is_false_positive])
         series.append({
@@ -810,11 +870,73 @@ def metrics_trends():
 
 @app.route('/api/detection/status', methods=['GET'])
 def detection_status():
+    user = get_current_user()
+    if not user:
+        return jsonify({'error': 'Unauthorized'}), 401
     return jsonify({
         'enabled': ENABLE_DETECTION and detection_service is not None,
         'is_running': detection_service.is_running if detection_service else False,
-        'detections_count': len(detection_service.recent_detections) if detection_service else 0
+        'detections_count': len(detection_service.recent_detections) if detection_service else 0,
+        'profile': QORGAN_PROFILE or 'default',
+        'centers_deploy': CENTERS_DEPLOY,
     })
+
+
+@app.route('/api/validation/detection-consistency', methods=['GET'])
+@rate_limit(limit=60, window_seconds=60)
+def detection_consistency_report():
+    user = get_current_user()
+    if not user:
+        return jsonify({'error': 'Unauthorized'}), 401
+
+    minutes = min(max(int(request.args.get('minutes', 60)), 1), 24 * 60)
+    cutoff = datetime.now(timezone.utc).replace(tzinfo=None) - timedelta(minutes=minutes)
+
+    audits = DetectionAudit.query.filter(
+        DetectionAudit.created_at >= cutoff,
+        (DetectionAudit.school_code == user.school_code) | (DetectionAudit.school_code.is_(None)),
+    ).order_by(DetectionAudit.created_at.desc()).all()
+
+    incidents = Incident.query.filter(
+        Incident.school_code == user.school_code,
+        Incident.type == 'weapon_detected',
+        Incident.created_at >= cutoff,
+    ).order_by(Incident.created_at.desc()).all()
+
+    incident_ids_from_audit = {a.incident_id for a in audits if a.incident_id is not None}
+    incidents_without_audit = [inc.id for inc in incidents if inc.id not in incident_ids_from_audit]
+
+    created_incident_rows = [a for a in audits if a.created_incident]
+    suppressed_rows = [a for a in audits if not a.created_incident]
+
+    report = {
+        'window_minutes': minutes,
+        'summary': {
+            'detections_seen': len(audits),
+            'incidents_created_from_detection': len(created_incident_rows),
+            'detections_suppressed': len(suppressed_rows),
+            'notifications_sent_total': int(sum(a.notifications_sent or 0 for a in audits)),
+            'weapon_incidents_in_db': len(incidents),
+            'weapon_incidents_without_audit': len(incidents_without_audit),
+            'if_and_only_if_status': 'pass' if len(incidents_without_audit) == 0 else 'review',
+        },
+        'incidents_without_audit': incidents_without_audit,
+        'recent_audits': [
+            {
+                'id': a.id,
+                'class_name': a.class_name,
+                'confidence': a.confidence,
+                'camera_location': a.camera_location,
+                'created_incident': bool(a.created_incident),
+                'incident_id': a.incident_id,
+                'notifications_sent': a.notifications_sent,
+                'reason': a.reason,
+                'created_at': a.created_at.isoformat(),
+            }
+            for a in audits[:100]
+        ],
+    }
+    return jsonify(report)
 
 # WebSocket Events
 @socketio.on('connect')
@@ -838,13 +960,36 @@ def handle_subscribe_camera(data):
 def on_weapon_detected(detection_data):
     """Called when weapon is detected"""
     with app.app_context():
+        # Deduplication: skip if a weapon_detected incident for this school exists within last 4s
+        school = detection_data.get('school_code')
+        cutoff = datetime.now(timezone.utc).replace(tzinfo=None) - timedelta(seconds=4)
+        existing = Incident.query.filter(
+            Incident.school_code == school,
+            Incident.type == 'weapon_detected',
+            Incident.created_at >= cutoff,
+        ).first()
+        if existing:
+            db.session.add(DetectionAudit(
+                school_code=school,
+                camera_location=detection_data.get('camera_location'),
+                class_name=detection_data.get('class_name', 'weapon'),
+                confidence=float(detection_data.get('confidence', 0.0)),
+                created_incident=False,
+                incident_id=existing.id,
+                notifications_sent=0,
+                reason='deduplicated_cooldown',
+            ))
+            db.session.commit()
+            return
+
         # Save to database
         incident = Incident(
             type='weapon_detected',
             description=f"{detection_data['class_name']} detected",
             location=detection_data.get('camera_location'),
             confidence=detection_data['confidence'],
-            image_path=detection_data.get('image_path')
+            image_path=detection_data.get('image_path'),
+            school_code=detection_data.get('school_code')
         )
         db.session.add(incident)
         db.session.commit()
@@ -860,7 +1005,8 @@ def on_weapon_detected(detection_data):
         }, namespace='/')
 
         # Create notifications for all guards
-        guards = User.query.filter_by(role='guard').all()
+        school = incident.school_code
+        guards = User.query.filter_by(role='guard', school_code=school).all() if school else User.query.filter_by(role='guard').all()
         for guard in guards:
             notification = Notification(
                 user_id=guard.id,
@@ -870,12 +1016,29 @@ def on_weapon_detected(detection_data):
                 icon='warning'
             )
             db.session.add(notification)
+
+        db.session.add(DetectionAudit(
+            school_code=incident.school_code,
+            camera_location=detection_data.get('camera_location'),
+            class_name=detection_data.get('class_name', 'weapon'),
+            confidence=float(detection_data.get('confidence', 0.0)),
+            created_incident=True,
+            incident_id=incident.id,
+            notifications_sent=len(guards),
+            reason='incident_created',
+        ))
         db.session.commit()
 
 # Test endpoint to simulate weapon detection
 @app.route('/api/test/simulate-weapon-alert', methods=['POST'])
 def simulate_weapon_alert():
     """Test endpoint to simulate weapon detection."""
+    if APP_ENV == 'production' and not _env_bool('ALLOW_SIMULATE_WEAPON_ALERT', False):
+        return jsonify({'error': 'Not found'}), 404
+    user = get_current_user()
+    if not user or user.role != 'guard':
+        return jsonify({'error': 'Unauthorized'}), 401
+
     data = request.get_json() or {}
     
     # Create a test incident
@@ -884,7 +1047,8 @@ def simulate_weapon_alert():
         description=data.get('description', 'Test: Knife detected'),
         location=data.get('location', 'Test Camera - Main Hall'),
         confidence=data.get('confidence', 0.95),
-        status='new'
+        status='new',
+        school_code=user.school_code,
     )
     
     db.session.add(incident)
@@ -901,7 +1065,7 @@ def simulate_weapon_alert():
     }, namespace='/')
     
     # Create notifications for all guards
-    guards = User.query.filter_by(role='guard').all()
+    guards = User.query.filter_by(role='guard', school_code=incident.school_code).all() if incident.school_code else User.query.filter_by(role='guard').all()
     for guard in guards:
         notification = Notification(
             user_id=guard.id,
@@ -931,40 +1095,62 @@ with app.app_context():
 
     # Lightweight SQLite migration for demo compatibility.
     cols = {c[1] for c in db.session.execute(db.text("PRAGMA table_info('incident')")).fetchall()}
+    if 'school_code' not in cols:
+        db.session.execute(db.text("ALTER TABLE incident ADD COLUMN school_code VARCHAR(50)"))
+        db.session.commit()
     if 'is_false_positive' not in cols:
         db.session.execute(db.text("ALTER TABLE incident ADD COLUMN is_false_positive BOOLEAN DEFAULT 0"))
         db.session.commit()
 
     seed_demo_data()
     
-    # Create default camera if none exist
+    # Cameras: centers deploy waits for BOOTSTRAP_CAMERA_STREAM or API; dev keeps optional USB default.
     if Camera.query.count() == 0:
-        default_camera = Camera(
-            name='Main Entrance Camera',
-            location='Main Entrance',
-            stream_url='0',  # webcam
-            school_code='SCH-1234'
-        )
-        db.session.add(default_camera)
-        db.session.commit()
+        bootstrap_stream = (os.getenv('BOOTSTRAP_CAMERA_STREAM', '') or '').strip()
+        if bootstrap_stream:
+            db.session.add(Camera(
+                name=(os.getenv('BOOTSTRAP_CAMERA_NAME', '') or 'Camera 1').strip() or 'Camera 1',
+                location=(os.getenv('BOOTSTRAP_CAMERA_LOCATION', '') or 'Training room').strip() or 'Training room',
+                stream_url=bootstrap_stream,
+                school_code=DEFAULT_SCHOOL_CODE,
+            ))
+            db.session.commit()
+        elif not CENTERS_DEPLOY:
+            db.session.add(Camera(
+                name='Main Entrance Camera',
+                location='Main Entrance',
+                stream_url='0',
+                school_code=DEFAULT_SCHOOL_CODE,
+            ))
+            db.session.commit()
     
     # Start weapon/knife detection on all active cameras (so app receives notifications)
     if detection_service is not None:
         try:
             cameras = Camera.query.filter_by(is_active=True).all()
+            started_sources = set()
             for cam in cameras:
                 source = int(cam.stream_url) if cam.stream_url and cam.stream_url.isdigit() else cam.stream_url or 0
+                source_key = str(source)
+                if source_key in started_sources:
+                    print(f'Skipping duplicate camera source {source_key} for camera {cam.id} ({cam.name})')
+                    continue
+                started_sources.add(source_key)
                 detection_service.start_camera_detection(
                     camera_id=str(cam.id),
                     camera_source=source,
-                    camera_location=cam.location or cam.name or 'Unknown'
+                    camera_location=cam.location or cam.name or 'Unknown',
+                    school_code=cam.school_code
                 )
             if cameras:
-                print(f'Detection started on {len(cameras)} camera(s)')
+                print(f'Detection started on {len(started_sources)} camera(s)')
+            elif CENTERS_DEPLOY:
+                print('CENTERS: no active cameras — set BOOTSTRAP_CAMERA_STREAM in .env or add cameras via the API (guard).')
         except Exception as e:
             print(f'Detection auto-start skipped (model/camera not available): {e}')
     else:
-        print('Detection disabled (set ENABLE_DETECTION=1 to enable).')
+        print('Detection disabled (set ENABLE_DETECTION=1 or QORGAN_PROFILE=centers to enable).')
 
 if __name__ == '__main__':
-    socketio.run(app, host='0.0.0.0', port=5001, debug=True, allow_unsafe_werkzeug=True)
+    debug_mode = APP_ENV != 'production' and os.getenv('FLASK_DEBUG', '0') == '1'
+    socketio.run(app, host='0.0.0.0', port=5001, debug=debug_mode, allow_unsafe_werkzeug=debug_mode)

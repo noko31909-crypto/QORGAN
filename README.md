@@ -1,9 +1,20 @@
 # Qorgan — School Safety System
 
 ## What is Qorgan?
-Qorgan is a school safety platform built for real-time threat response. It helps schools detect possible weapons from camera feeds, alert security staff immediately, and guide coordinated action from the same mobile app.
+Qorgan is a school safety platform built for real-time threat response. It helps schools detect possible weapons from camera feeds, alert security staff immediately, and guide coordinated action from the same browser-based app.
 
 The problem we solve is response delay. In many emergencies, seconds matter, but information is fragmented. Qorgan connects detection, alerting, and incident handling into one clear workflow.
+
+## Competition package
+For Technovation-style submission materials, use:
+- `SUMMARY.md` (judge-ready project description)
+- `docs/PITCH_SLIDES.md`
+- `docs/PITCH_VIDEO_SCRIPT.md`
+- `docs/TECHNICAL_VIDEO_SCRIPT.md`
+- `docs/BUSINESS_CANVAS.md`
+- `docs/BUSINESS_ESTIMATE.md`
+- `docs/RESPONSIBLE_AI_AND_ETHICS.md`
+- `docs/LEARNING_JOURNEY.md`
 
 ## How it works
 1. Camera streams are monitored by the detection service.
@@ -20,19 +31,19 @@ The problem we solve is response delay. In many emergencies, seconds matter, but
 - Response metrics: backend summary includes response KPIs such as P95 acknowledgment time.
 - Timeline and notes: guards can add incident notes and review action history.
 - False-positive handling: incidents can be flagged/unflagged for operational quality control.
-- SOS flow: emergency alerts can be sent from mobile clients to backend.
+- SOS flow: emergency alerts can be sent from web clients to backend.
 - Map and guidance support: threat context and emergency guidance are available in-app.
 - Demo seeding mode: reproducible demo data for competition presentation.
 
-## ML Research
-Qorgan includes wavelet preprocessing experiments to improve detection quality. The team compared multiple transforms (including Haar, Daubechies, and Symlet) and measured training/evaluation outputs in the project research pipeline.
+## ML Development
+Qorgan uses a YOLO-based ONNX detection pipeline for real-time weapon detection from camera streams.
 
-Key result: Haar wavelet preprocessing improved mAP50 by +9.3% compared to the baseline setup. This gave more reliable detections and supported the decision to include wavelet-based preprocessing in the research workflow.
+The team focused on YOLO model integration, confidence threshold tuning, and alert workflow reliability in the backend and web app.
 
 ## Tech stack
 - Backend: Python, Flask, Flask-SocketIO, SQLAlchemy, SQLite, JWT auth.
-- Mobile: React Native (Expo) with TypeScript and React Navigation.
-- ML: YOLO-based ONNX inference pipeline, camera/frame processing, wavelet preprocessing experiments.
+- Web: React with Vite, TypeScript, and React Router.
+- ML: YOLO-based ONNX inference pipeline and camera/frame processing.
 
 ## How to run
 From the project root:
@@ -41,9 +52,26 @@ From the project root:
 # 1) Install dependencies
 ./scripts/setup.sh
 
-# 2) Start backend + mobile web app
+# 2) Start backend + web app
 ./scripts/start_app.sh
 ```
+
+### Training centers (real model + cameras)
+Use profile **`QORGAN_PROFILE=centers`**: detection defaults **on**, demo seed **off**, no demo-video camera fallback unless you explicitly allow it. Copy `apps/backend/.env.example` to `apps/backend/.env`, set `SECRET_KEY`, `CORS_ALLOWED_ORIGINS`, `WS_API_KEY`, and **`BOOTSTRAP_CAMERA_STREAM`** (e.g. `0` or an RTSP URL), then:
+
+```bash
+./scripts/start_centers.sh
+```
+
+Or with Docker from the repo root:
+
+```bash
+cp apps/backend/.env.example apps/backend/.env
+# edit .env, then:
+docker compose up --build -d
+```
+
+Details: [docs/PILOT_INSTALL.md](docs/PILOT_INSTALL.md).
 
 Manual mode:
 
@@ -52,10 +80,10 @@ Manual mode:
 cd apps/backend
 ENABLE_DETECTION=1 DEMO_SEED=1 python3 app.py
 
-# Terminal 2: mobile app
-cd apps/mobile
+# Terminal 2: web app
+cd apps/web
 npm install
-npm run web
+npm run dev -- --host 0.0.0.0
 ```
 
 System proof check:
@@ -73,9 +101,10 @@ Guard demo account (seeded when DEMO_SEED=1):
 
 ## Project structure
 - apps/backend: Flask API, incident workflow, notifications, metrics, and detection integration.
-- apps/mobile: React Native app screens, navigation, and API/socket services.
+- apps/web: Web app screens, navigation, and API/socket services.
 - models: ONNX detection models.
-- scripts: setup, startup, and test/proof scripts.
+- Dockerfile / docker-compose.yml: backend + detection image for training-center style deployment.
+- scripts: setup, startup (`start_centers.sh` for `QORGAN_PROFILE=centers`), and test/proof scripts.
 - tools/vision: standalone vision utilities (camera test, image/video detection, preprocessing).
 - data: detection outputs, experiment artifacts, and result images.
 - docs: architecture, flow, run/test notes, and competition support documents.
