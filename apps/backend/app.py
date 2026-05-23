@@ -1153,4 +1153,4 @@ with app.app_context():
 
 if __name__ == '__main__':
     debug_mode = APP_ENV != 'production' and os.getenv('FLASK_DEBUG', '0') == '1'
-    socketio.run(app, host='0.0.0.0', port=5001, debug=debug_mode, allow_unsafe_werkzeug=debug_mode)
+    port = int(os.getenv('PORT', 5001))     socketio.run(app, host='0.0.0.0', port=port, debug=debug_mode, allow_unsafe_werkzeug=debug_mode)
