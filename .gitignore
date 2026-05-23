@@ -17,3 +17,10 @@ data/
 .vscode/
 __pycache__/
 .env
+
+# Frontend build artifacts
+node_modules/
+dist/
+.env.local
+.env.*.local
+*.tsbuildinfo
