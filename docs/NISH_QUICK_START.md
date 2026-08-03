@@ -1,13 +1,14 @@
 # 🚀 Qorgan: Быстрый старт для НИШ (Nazarbayev Intellectual Schools)
 
-Вы сейчас в НИШ и вам нужно установить систему прямо сейчас. Вот пошаговая инструкция, как развернуть систему на сервере НИШ.
+Вы сейчас в НИШ и вам нужно установить систему прямо сейчас на месте. Вот пошаговая инструкция, как развернуть систему на сервере НИШ для **Windows**, **Linux** и **macOS**.
 
 ---
 
 ## Шаг 1: Подготовка сервера
 
-Убедитесь, что на сервере (ПК) в НИШ установлено:
-- **Ubuntu 22.04** (или macOS, если вы используете Mac)
+Убедитесь, что на компьютере в НИШ установлено:
+- **Операционная система:** Windows 10/11, Ubuntu 22.04, или macOS
+- **Программы:** Python 3.10+ (с сайта python.org) и Node.js 18+ (с сайта nodejs.org)
 - **Интернет-соединение** для клонирования кода
 - **Подключение к камерам** (либо USB веб-камера, либо RTSP ссылки на IP-камеры НИШ)
 
@@ -15,23 +16,9 @@
 
 ## Шаг 2: Клонирование и установка
 
-Откройте терминал на сервере в НИШ и выполните:
+Выберите вашу операционную систему:
 
-```bash
-# 1. Скачиваем код
-git clone https://github.com/noko31909-crypto/QORGAN.git
-cd QORGAN
-
-# 2. Устанавливаем все зависимости (Python + Node.js)
-./scripts/setup.sh
-```
-
----
-
-### 🪟 Если у вас Windows:
-
-Если в НИШ используется ПК на Windows, установите **Python 3.10+** и **Node.js 18+** с официальных сайтов. Затем используйте следующие команды в **PowerShell** или **Command Prompt**:
-
+### 🪟 Windows (PowerShell / CMD)
 ```powershell
 # 1. Скачиваем код
 git clone https://github.com/noko31909-crypto/QORGAN.git
@@ -44,6 +31,26 @@ pip install -r apps/backend/requirements.txt
 npm install --prefix apps/web
 ```
 
+### 🐧 Linux (Ubuntu / Terminal)
+```bash
+# 1. Скачиваем код
+git clone https://github.com/noko31909-crypto/QORGAN.git
+cd QORGAN
+
+# 2. Запускаем скрипт установки
+./scripts/setup.sh
+```
+
+### 🍏 macOS (Terminal)
+```bash
+# 1. Скачиваем код
+git clone https://github.com/noko31909-crypto/QORGAN.git
+cd QORGAN
+
+# 2. Запускаем скрипт установки (или вручную через pip и npm)
+./scripts/setup.sh
+```
+
 ---
 
 ## Шаг 3: Настройка переменных
@@ -52,10 +59,8 @@ npm install --prefix apps/web
 
 ```bash
 cp apps/backend/.env.multicam.example apps/backend/.env
-nano apps/backend/.env
 ```
-
-**Вставьте в файл следующие настройки:**
+Откройте файл `apps/backend/.env` в любом текстовом редакторе (Notepad, Nano, TextEdit) и вставьте:
 
 ```env
 QORGAN_PROFILE=centers
@@ -75,34 +80,43 @@ DETECTION_MEMORY_LIMIT_MB=4000
 DETECTION_FRAME_WIDTH=640
 DETECTION_FRAME_HEIGHT=480
 ```
-*(Сохраните файл: Ctrl+O, Enter, Ctrl+X)*
 
 ---
 
 ## Шаг 4: Запуск системы
 
-Запустите бэкенд-сервер:
+Откройте **два разных терминала** (или окна командной строки) и запустите:
 
+### Терминал 1: Бэкенд (Сервер)
+
+**Windows:**
+```powershell
+set QORGAN_PROFILE=centers
+python apps/backend/app.py
+```
+
+**Linux / macOS:**
 ```bash
 ./scripts/start_centers.sh
 ```
 
-*(Если на Windows: `set QORGAN_PROFILE=centers && python apps/backend/app.py`)*
-
 Сервер запустится на порту `5001`.
 
-Откройте **второй терминал** и запустите веб-интерфейс:
+### Терминал 2: Веб-интерфейс
 
+В любом терминале (не закрывая первый):
 ```bash
 cd apps/web
 npm run dev -- --host 0.0.0.0
 ```
 
+Веб-интерфейс запустится на порту `5173`.
+
 ---
 
 ## Шаг 5: Подключение и тестирование
 
-1. Откройте браузер на ПК охранника в НИШ.
+1. Откройте браузер (Chrome, Edge, Safari) на ПК охранника в НИШ.
 2. Перейдите по адресу: `http://localhost:5173` (или IP сервера:5173, если заходите с другого ПК).
 3. Нажмите **"Create account"** (Создать аккаунт).
    - Email: `guard@nish.local`
@@ -119,25 +133,21 @@ npm run dev -- --host 0.0.0.0
 
 Если вам нужно подключить IP-камеры НИШ (RTSP), вам нужно зарегистрировать их в базе данных.
 
-Вы можете сделать это через Python-скрипт или консоль. Самый простой способ — вручную через код (если баз данных еще нет):
-
 Отредактируйте файл `.env`, чтобы добавить RTSP ссылку при первом запуске:
 ```env
 BOOTSTRAP_CAMERA_STREAM=rtsp://admin:password@192.168.1.100:554/stream
 BOOTSTRAP_CAMERA_NAME=Вход в НИШ
 BOOTSTRAP_CAMERA_LOCATION=Главный вход
 ```
-И перезапустите сервер.
+Затем перезапустите сервер (Terминал 1).
 
 ---
 
 ## 🛑 Решение проблем
 
 **Ошибка: Port 5001 is already in use**
-```bash
-lsof -i :5001
-kill -9 <PID>
-```
+- Windows: `netstat -ano | findstr :5001`, затем `taskkill /PID <PID> /F`
+- Linux / macOS: `lsof -i :5001`, затем `kill -9 <PID>`
 
 **Камера не открывается (Black screen)**
 Убедитесь, что RTSP ссылка правильная и доступна с сервера НИШ. Проверьте через VLC плеер.
@@ -145,7 +155,7 @@ kill -9 <PID>
 **Ошибка: ModuleNotFoundError**
 ```bash
 cd apps/backend
-pip3 install -r requirements.txt
+pip install -r requirements.txt
 ```
 
 ---
