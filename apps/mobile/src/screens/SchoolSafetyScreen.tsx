@@ -22,30 +22,36 @@ import { socketService } from '../services/socket';
 
 export const SchoolSafetyScreen = () => {
   const [cameras, setCameras] = useState<any[]>([]);
+  const [cameraStatuses, setCameraStatuses] = useState<any[]>([]);
+  const [selectedCameraId, setSelectedCameraId] = useState<number | null>(null);
   const [incidents, setIncidents] = useState<Incident[]>([]);
   const [loading, setLoading] = useState(false);
   const [token, setToken] = useState('');
   const [locationShare, setLocationShare] = useState(false);
   const [geofencing, setGeofencing] = useState(true);
   const [inactivity, setInactivity] = useState(true);
+  const [errorText, setErrorText] = useState('');
 
   const streamHost = API_BASE_URL.replace(/\/api$/, '');
-  const primaryCameraId = cameras[0]?.id;
-  const feedUri = token && primaryCameraId
-    ? `${streamHost}/api/video-feed/${primaryCameraId}?token=${encodeURIComponent(token)}`
+  const activeCamId = selectedCameraId ?? cameras[0]?.id;
+  const feedUri = token && activeCamId
+    ? `${streamHost}/api/video-feed/${activeCamId}?token=${encodeURIComponent(token)}`
     : '';
 
   const load = useCallback(async () => {
     setLoading(true);
     try {
-      const [cams, inc] = await Promise.all([
+      const [cams, status, inc] = await Promise.all([
         api.getCameras(),
+        api.getCamerasStatus(),
         api.getIncidents({ limit: 10 }),
       ]);
       setCameras(cams);
+      setCameraStatuses(status);
       setIncidents(inc);
-    } catch {
-      // tolerant on first launch
+      setErrorText('');
+    } catch (e: any) {
+      setErrorText(e?.message || 'Failed to load');
     } finally {
       setLoading(false);
     }
@@ -67,6 +73,28 @@ export const SchoolSafetyScreen = () => {
     return unsub;
   }, [load]);
 
+  const handleStartCamera = async (cameraId: number) => {
+    try {
+      await api.startCamera(cameraId);
+      await load();
+    } catch (e: any) {
+      setErrorText(e?.message || 'Failed to start camera');
+    }
+  };
+
+  const handleStopCamera = async (cameraId: number) => {
+    try {
+      await api.stopCamera(cameraId);
+      await load();
+    } catch (e: any) {
+      setErrorText(e?.message || 'Failed to stop camera');
+    }
+  };
+
+  const isRunning = (cameraId: number) => {
+    return cameraStatuses.find((c) => c.id === cameraId)?.is_running ?? false;
+  };
+
   const unknownCount = incidents.filter((i) => i.type === 'weapon_detected').length;
   const safeScale = Math.max(0, 100 - unknownCount * 15);
 
@@ -77,6 +105,37 @@ export const SchoolSafetyScreen = () => {
         contentContainerStyle={styles.content}
         refreshControl={<RefreshControl refreshing={loading} onRefresh={load} />}
       >
+        {/* Camera selector */}
+        <ScrollView horizontal showsHorizontalScrollIndicator={false} style={{ marginBottom: 10 }}>
+          {cameras.map((cam: any) => {
+            const running = isRunning(cam.id);
+            const isSelected = activeCamId === cam.id;
+            return (
+              <View key={cam.id} style={styles.cameraRow}>
+                <Pressable
+                  onPress={() => setSelectedCameraId(cam.id)}
+                  style={[styles.cameraBtn, isSelected && styles.cameraBtnSelected]}
+                >
+                  <Text style={[styles.cameraText, isSelected && styles.cameraTextSelected]}>
+                    {cam.name}
+                  </Text>
+                </Pressable>
+                <Pressable
+                  onPress={() => (running ? handleStopCamera(cam.id) : handleStartCamera(cam.id))}
+                  style={[styles.toggleCameraBtn, running ? styles.toggleCameraStop : styles.toggleCameraStart]}
+                >
+                  <Text style={styles.toggleCameraText}>{running ? 'Stop' : 'Start'}</Text>
+                </Pressable>
+                <Text style={[styles.cameraStatusText, running ? styles.statusOn : styles.statusOff]}>
+                  {running ? '● ON' : '○ OFF'}
+                </Text>
+              </View>
+            );
+          })}
+        </ScrollView>
+
+        {errorText ? <Text style={styles.errorText}>{errorText}</Text> : null}
+
         <View style={styles.preview}>
           {feedUri ? (
             <WebView
@@ -90,9 +149,21 @@ export const SchoolSafetyScreen = () => {
           ) : (
             <View style={[styles.previewInner, styles.previewFallback]}>
               <Ionicons name="videocam-off" size={32} color={Colors.muted} />
-              <Text style={styles.previewText}>No active camera</Text>
+              <Text style={styles.previewText}>
+                {token
+                  ? 'Select a camera and press Start to monitor.'
+                  : 'No active camera'}
+              </Text>
             </View>
           )}
+        </View>
+
+        {/* Active cameras count */}
+        <View style={styles.statCard}>
+          <Ionicons name="videocam" size={20} color={Colors.accent} />
+          <Text style={styles.statText}>
+            Active: {cameras.filter((c) => isRunning(c.id)).length} / {cameras.length}
+          </Text>
         </View>
 
         <AlertBar icon="flame" text={`CCTV captured ${unknownCount || 0} unknown persons.`} />
@@ -187,7 +258,24 @@ const styles = StyleSheet.create({
   },
   previewInner: { flex: 1, backgroundColor: '#DDDDE2' },
   previewFallback: { alignItems: 'center', justifyContent: 'center', gap: 6 },
-  previewText: { color: Colors.muted, fontWeight: '600' },
+  previewText: { color: Colors.muted, fontWeight: '600', textAlign: 'center' },
+  errorText: { color: '#B00020', fontWeight: '700', marginBottom: 6 },
+
+  cameraRow: { flexDirection: 'row', alignItems: 'center', marginRight: 8, marginBottom: 4 },
+  cameraBtn: {
+    paddingVertical: 6, paddingHorizontal: 10, borderRadius: 8,
+    borderWidth: 1, borderColor: '#DDD', backgroundColor: '#FFF',
+  },
+  cameraBtnSelected: { borderColor: '#2F855A', backgroundColor: '#C6F6D5' },
+  cameraText: { color: Colors.text, fontWeight: '700', fontSize: 12 },
+  cameraTextSelected: { color: '#2F855A' },
+  toggleCameraBtn: { paddingVertical: 4, paddingHorizontal: 8, borderRadius: 6, marginLeft: 4 },
+  toggleCameraStart: { backgroundColor: '#38A169' },
+  toggleCameraStop: { backgroundColor: '#E53E3E' },
+  toggleCameraText: { color: '#fff', fontWeight: '700', fontSize: 11 },
+  cameraStatusText: { fontSize: 11, marginLeft: 4 },
+  statusOn: { color: '#E53E3E' },
+  statusOff: { color: '#A0AEC0' },
 
   alertBar: {
     backgroundColor: Colors.primary,

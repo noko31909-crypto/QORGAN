@@ -938,6 +938,97 @@ def detection_consistency_report():
     }
     return jsonify(report)
 
+# Camera individual control endpoints
+@app.route('/api/cameras/<int:camera_id>/start', methods=['POST'])
+@rate_limit(limit=60, window_seconds=60)
+def start_camera(camera_id):
+    """Start detection on a specific camera."""
+    user = get_current_user()
+    if not user:
+        return jsonify({'error': 'Unauthorized'}), 401
+    if user.role != 'guard':
+        return jsonify({'error': 'Only guards can start cameras'}), 403
+
+    camera = Camera.query.filter_by(id=int(camera_id), school_code=user.school_code).first()
+    if not camera:
+        return jsonify({'error': 'Camera not found'}), 404
+
+    if not detection_service:
+        return jsonify({'error': 'Detection service not initialized'}), 500
+
+    # Check if already running
+    with detection_service._lock:
+        if str(camera.id) in detection_service.camera_threads:
+            return jsonify({'error': 'Camera already running', 'camera_id': camera.id}), 400
+
+    stream_source = _parse_camera_source(camera.stream_url or '')
+    detection_service.start_camera_detection(
+        camera_id=str(camera.id),
+        camera_source=stream_source,
+        camera_location=camera.location or camera.name or 'Unknown',
+        school_code=camera.school_code
+    )
+
+    return jsonify({
+        'message': f'Camera {camera.name} started',
+        'camera_id': camera.id,
+        'location': camera.location
+    })
+
+
+@app.route('/api/cameras/<int:camera_id>/stop', methods=['POST'])
+@rate_limit(limit=60, window_seconds=60)
+def stop_camera(camera_id):
+    """Stop detection on a specific camera."""
+    user = get_current_user()
+    if not user:
+        return jsonify({'error': 'Unauthorized'}), 401
+    if user.role != 'guard':
+        return jsonify({'error': 'Only guards can stop cameras'}), 403
+
+    camera = Camera.query.filter_by(id=int(camera_id), school_code=user.school_code).first()
+    if not camera:
+        return jsonify({'error': 'Camera not found'}), 404
+
+    if not detection_service:
+        return jsonify({'error': 'Detection service not initialized'}), 500
+
+    detection_service.stop_camera_detection(str(camera.id))
+
+    return jsonify({
+        'message': f'Camera {camera.name} stopped',
+        'camera_id': camera.id
+    })
+
+
+@app.route('/api/cameras/status', methods=['GET'])
+def get_cameras_status():
+    """Get status of all cameras for the user's school."""
+    user = get_current_user()
+    if not user:
+        return jsonify({'error': 'Unauthorized'}), 401
+
+    cameras = Camera.query.filter_by(school_code=user.school_code).all()
+    status = []
+
+    for cam in cameras:
+        is_running = False
+        if detection_service:
+            with detection_service._lock:
+                is_running = str(cam.id) in detection_service.camera_threads
+
+        status.append({
+            'id': cam.id,
+            'name': cam.name,
+            'location': cam.location,
+            'stream_url': cam.stream_url,
+            'is_active': cam.is_active,
+            'is_running': is_running
+        })
+
+    return jsonify(status)
+
+
 # WebSocket Events
 @socketio.on('connect')
 def handle_connect():
@@ -1124,30 +1215,13 @@ with app.app_context():
             ))
             db.session.commit()
     
-    # Start weapon/knife detection on all active cameras (so app receives notifications)
+    # Cameras are started individually via API endpoints:
+    #   POST /api/cameras/<id>/start   — start detection on a specific camera
+    #   POST /api/cameras/<id>/stop    — stop detection on a specific camera
+    #   GET  /api/cameras/status       — list all cameras with running status
+    # No cameras are auto-started at boot. The guard selects which cameras to monitor.
     if detection_service is not None:
-        try:
-            cameras = Camera.query.filter_by(is_active=True).all()
-            started_sources = set()
-            for cam in cameras:
-                source = int(cam.stream_url) if cam.stream_url and cam.stream_url.isdigit() else cam.stream_url or 0
-                source_key = str(source)
-                if source_key in started_sources:
-                    print(f'Skipping duplicate camera source {source_key} for camera {cam.id} ({cam.name})')
-                    continue
-                started_sources.add(source_key)
-                detection_service.start_camera_detection(
-                    camera_id=str(cam.id),
-                    camera_source=source,
-                    camera_location=cam.location or cam.name or 'Unknown',
-                    school_code=cam.school_code
-                )
-            if cameras:
-                print(f'Detection started on {len(started_sources)} camera(s)')
-            elif CENTERS_DEPLOY:
-                print('CENTERS: no active cameras — set BOOTSTRAP_CAMERA_STREAM in .env or add cameras via the API (guard).')
-        except Exception as e:
-            print(f'Detection auto-start skipped (model/camera not available): {e}')
+        print('Detection service ready. Start cameras individually via POST /api/cameras/<id>/start')
     else:
         print('Detection disabled (set ENABLE_DETECTION=1 or QORGAN_PROFILE=centers to enable).')
 

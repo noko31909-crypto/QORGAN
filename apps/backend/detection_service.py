@@ -40,7 +40,17 @@ class DetectionService:
         self.max_bbox_area_ratio = min(1.0, float(max_bbox_area_ratio))
         self.allow_demo_video_fallback = bool(allow_demo_video_fallback)
         self.demo_video = Path(__file__).resolve().parents[2] / 'data' / 'demo' / 'sample_school_video.mp4'
-        self.allowed_keywords = {'weapon', 'knife', 'gun', 'rifle', 'pistol', 'firearm', 'handgun', 'shotgun'}
+        # Extended weapon keywords: knife, gun, rifle, pistol, axe, machete, sword, grenade
+        self.allowed_keywords = {
+            'weapon', 'knife', 'gun', 'rifle', 'pistol', 'firearm', 'handgun', 'shotgun',
+            'axe', 'ax', 'hatchet', 'machete', 'sword', 'blade', 'dagger', 'spear',
+            'grenade', 'explosive', 'bomb', 'molotov'
+        }
+        # Keywords indicating a concealed/hidden weapon
+        self.concealed_keywords = {'concealed', 'hidden', 'pocket', 'waistband', 'holster'}
+        # Lower area thresholds for concealed weapons (smaller visible portion)
+        self.min_concealed_area_ratio = max(0.0, float(min_bbox_area_ratio) * 0.5)
+        self.max_concealed_area_ratio = min(1.0, 0.3)
         
         # Create directory for saving detection images
         self.save_dir = Path(save_dir) if save_dir else Path('detection_images')
@@ -62,7 +72,10 @@ class DetectionService:
         self.detection_callback = callback
 
     def _get_class_name(self, class_id):
-        FALLBACK_NAMES = {0: 'knife', 1: 'gun', 2: 'weapon'}
+        FALLBACK_NAMES = {
+            0: 'knife', 1: 'pistol', 2: 'rifle', 3: 'axe',
+            4: 'machete', 5: 'grenade', 6: 'concealed_weapon', 7: 'weapon'
+        }
         names = getattr(self.model, 'names', None)
         if isinstance(names, dict):
             return str(names.get(class_id, FALLBACK_NAMES.get(class_id, f'class_{class_id}')))
@@ -81,6 +94,11 @@ class DetectionService:
             return True
 
         return any(k in lowered for k in self.allowed_keywords)
+
+    def _is_concealed_weapon(self, class_name: str) -> bool:
+        """Check if the detected object is a concealed weapon."""
+        lowered = (class_name or '').strip().lower()
+        return any(k in lowered for k in self.concealed_keywords)
     
     def start_camera_detection(self, camera_id, camera_source, camera_location='Unknown', school_code=None):
         """
@@ -179,12 +197,21 @@ class DetectionService:
                         # Area filter to drop tiny/huge false positives
                         x1, y1, x2, y2 = box.xyxy[0]
                         area_ratio = ((x2 - x1) * (y2 - y1)) / (frame_w * frame_h + 1e-6)
-                        if area_ratio < self.min_bbox_area_ratio or area_ratio > self.max_bbox_area_ratio:
-                            continue
 
                         detection_class_id = int(box.cls[0])
                         class_name = self._get_class_name(detection_class_id)
                         if not self._is_weapon_like_class(class_name):
+                            continue
+
+                        # Use lower area thresholds for concealed weapons (smaller visible portion)
+                        if self._is_concealed_weapon(class_name):
+                            min_area = self.min_concealed_area_ratio
+                            max_area = self.max_concealed_area_ratio
+                        else:
+                            min_area = self.min_bbox_area_ratio
+                            max_area = self.max_bbox_area_ratio
+
+                        if area_ratio < min_area or area_ratio > max_area:
                             continue
 
                         detection_box = box
@@ -219,7 +246,8 @@ class DetectionService:
                                 'confidence': detection_confidence,
                                 'timestamp': datetime.now().isoformat(),
                                 'image_path': str(image_path),
-                                'bbox': detection_box.xyxy[0].tolist()
+                                'bbox': detection_box.xyxy[0].tolist(),
+                                'is_concealed': self._is_concealed_weapon(class_name)
                             }
 
                             with self._lock:

@@ -99,6 +99,13 @@ class ApiService {
   }
 
   getCameras() { return this.request('/cameras', { auth: true }); }
+  getCamerasStatus() { return this.request('/cameras/status', { auth: true }); }
+  startCamera(cameraId: number) {
+    return this.request(`/cameras/${cameraId}/start`, { method: 'POST', auth: true });
+  }
+  stopCamera(cameraId: number) {
+    return this.request(`/cameras/${cameraId}/stop`, { method: 'POST', auth: true });
+  }
   getIncidents(params?: { status?: string; limit?: number }) {
     const query = new URLSearchParams();
     if (params?.status) query.set('status', params.status);

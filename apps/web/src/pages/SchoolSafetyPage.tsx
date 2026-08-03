@@ -8,6 +8,8 @@ import { timeAgo } from '../utils/time';
 
 export const SchoolSafetyPage = () => {
   const [cameras, setCameras] = useState<any[]>([]);
+  const [cameraStatuses, setCameraStatuses] = useState<any[]>([]);
+  const [selectedCameraId, setSelectedCameraId] = useState<number | null>(null);
   const [incidents, setIncidents] = useState<Incident[]>([]);
   const [errorText, setErrorText] = useState('');
   const [loading, setLoading] = useState(false);
@@ -18,16 +20,21 @@ export const SchoolSafetyPage = () => {
 
   const token = api.getToken();
   const streamHost = API_BASE_URL.replace(/\/api$/, '');
-  const primaryCameraId = cameras[0]?.id;
-  const feedUri = token && primaryCameraId
-    ? `${streamHost}/api/video-feed/${primaryCameraId}?token=${encodeURIComponent(token)}`
+  const activeCamId = selectedCameraId ?? cameras[0]?.id;
+  const feedUri = token && activeCamId
+    ? `${streamHost}/api/video-feed/${activeCamId}?token=${encodeURIComponent(token)}`
     : '';
 
   const load = useCallback(async () => {
     setLoading(true);
     try {
-      const [cams, inc] = await Promise.all([api.getCameras(), api.getIncidents({ limit: 30 })]);
+      const [cams, status, inc] = await Promise.all([
+        api.getCameras(),
+        api.getCamerasStatus(),
+        api.getIncidents({ limit: 30 }),
+      ]);
       setCameras(cams);
+      setCameraStatuses(status);
       setIncidents(inc);
       setErrorText('');
     } catch (e: any) {
@@ -38,6 +45,28 @@ export const SchoolSafetyPage = () => {
   }, []);
 
   useEffect(() => { load(); }, [load]);
+
+  const handleStartCamera = async (cameraId: number) => {
+    try {
+      await api.startCamera(cameraId);
+      await load();
+    } catch (e: any) {
+      setErrorText(e?.message || 'Failed to start camera.');
+    }
+  };
+
+  const handleStopCamera = async (cameraId: number) => {
+    try {
+      await api.stopCamera(cameraId);
+      await load();
+    } catch (e: any) {
+      setErrorText(e?.message || 'Failed to stop camera.');
+    }
+  };
+
+  const isRunning = (cameraId: number) => {
+    return cameraStatuses.find((c) => c.id === cameraId)?.is_running ?? false;
+  };
 
   const visibleIncidents = incidents.filter((inc) => statusFilter === 'all' || (inc.status || 'new') === statusFilter);
 
@@ -92,9 +121,55 @@ export const SchoolSafetyPage = () => {
       <div style={{ padding: 16, overflow: 'auto' }}>
         {errorText && <p style={{ color: '#B00020', fontWeight: 600 }}>{errorText}</p>}
 
+        {/* Camera selector */}
+        <div style={{ marginBottom: 10, display: 'flex', flexWrap: 'wrap', gap: 8, alignItems: 'center' }}>
+          <span style={{ color: Colors.text, fontWeight: 700, fontSize: 13, marginRight: 4 }}>Cameras:</span>
+          {cameras.map((cam: any) => {
+            const running = isRunning(cam.id);
+            const isSelected = activeCamId === cam.id;
+            return (
+              <div key={cam.id} style={{ display: 'flex', alignItems: 'center', gap: 4 }}>
+                <button
+                  onClick={() => setSelectedCameraId(cam.id)}
+                  style={{
+                    padding: '6px 10px',
+                    borderRadius: 8,
+                    border: isSelected ? '2px solid #2F855A' : '1px solid #DDD',
+                    background: isSelected ? '#C6F6D5' : '#FFF',
+                    color: Colors.text,
+                    fontWeight: 600,
+                    fontSize: 12,
+                    cursor: 'pointer',
+                  }}
+                >
+                  {cam.name}
+                </button>
+                <button
+                  onClick={() => running ? handleStopCamera(cam.id) : handleStartCamera(cam.id)}
+                  style={{
+                    padding: '4px 8px',
+                    borderRadius: 6,
+                    border: 'none',
+                    background: running ? '#E53E3E' : '#38A169',
+                    color: '#fff',
+                    fontWeight: 700,
+                    fontSize: 11,
+                    cursor: 'pointer',
+                  }}
+                >
+                  {running ? 'Stop' : 'Start'}
+                </button>
+                <span style={{ fontSize: 11, color: running ? '#E53E3E' : '#A0AEC0' }}>
+                  {running ? '● ON' : '○ OFF'}
+                </span>
+              </div>
+            );
+          })}
+        </div>
+
         {/* Camera feed */}
         <div style={{
-          height: 220,
+          height: 280,
           borderRadius: 10,
           overflow: 'hidden',
           marginBottom: 10,
@@ -111,7 +186,7 @@ export const SchoolSafetyPage = () => {
               alignItems: 'center',
             }}>
               <span style={{ color: '#4A4A56', fontWeight: 600 }}>
-                {token ? 'No active cameras found for this school.' : 'Login required to load camera feed.'}
+                {token ? 'Select a camera and press Start to monitor.' : 'Login required to load camera feed.'}
               </span>
             </div>
           )}
@@ -140,10 +215,9 @@ export const SchoolSafetyPage = () => {
           ))}
         </div>
 
-        <p style={{ color: Colors.text, fontWeight: 700, margin: '8px 0' }}>Active Cameras: {cameras.length}</p>
-        {cameras.map((cam: any) => (
-          <p key={cam.id} style={{ color: '#4A4A56', margin: '0 0 4px' }}>&bull; {cam.name} ({cam.location})</p>
-        ))}
+        <p style={{ color: Colors.text, fontWeight: 700, margin: '8px 0' }}>
+          Active Cameras: {cameras.filter((c) => isRunning(c.id)).length} / {cameras.length}
+        </p>
 
         <p style={{ color: Colors.text, fontWeight: 700, margin: '8px 0' }}>Incidents ({visibleIncidents.length})</p>
         {visibleIncidents.length === 0 && <p style={{ color: '#4A4A56' }}>No incidents for selected filter.</p>}
