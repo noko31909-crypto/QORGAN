@@ -75,6 +75,14 @@ rate_lock = Lock()
 request_buckets = defaultdict(list)
 video_feed_last_alert = {}  # per-camera cooldown for video_feed detections
 
+# Video feed shared capture pools (avoid duplicate OpenCV captures per camera)
+_video_feed_pools: dict[str, object] = {}
+_video_feed_pool_lock = Lock()
+
+# Maximum concurrent video-feed viewers per camera
+MAX_VIDEO_FEED_VIEWERS = int(os.getenv('MAX_VIDEO_FEED_VIEWERS', '5'))
+video_feed_viewers: dict[str, int] = defaultdict(int)  # camera_id -> viewer count
+
 
 def rate_limit(limit: int, window_seconds: int):
     def decorator(fn):
@@ -437,6 +445,62 @@ def _parse_camera_source(stream_url: str):
     return source_text
 
 
+class _SharedCapture:
+    """Thread-safe shared VideoCapture wrapper with frame caching."""
+    def __init__(self, source):
+        self.source = source
+        self.cap = cv2.VideoCapture(source)
+        if self.cap.isOpened():
+            self.cap.set(cv2.CAP_PROP_BUFFERSIZE, 2)
+        self.latest_frame = None
+        self.latest_lock = threading.Lock()
+        self.reader_count = 0
+        self.reader_lock = threading.Lock()
+        self._running = True
+        self._thread = None
+        if self.cap.isOpened():
+            self._thread = threading.Thread(target=self._read_loop, daemon=True)
+            self._thread.start()
+    
+    def _read_loop(self):
+        while self._running and self.cap.isOpened():
+            ret, frame = self.cap.read()
+            if ret:
+                with self.latest_lock:
+                    self.latest_frame = frame
+            else:
+                time.sleep(0.1)
+    
+    def get_frame(self):
+        with self.latest_lock:
+            return self.latest_frame
+    
+    def add_reader(self):
+        with self.reader_lock:
+            self.reader_count += 1
+    
+    def remove_reader(self):
+        with self.reader_lock:
+            self.reader_count -= 1
+            if self.reader_count <= 0:
+                self._running = False
+                self.cap.release()
+    
+    def release(self):
+        self.remove_reader()
+
+
+def _get_shared_capture(source):
+    """Get or create a shared VideoCapture for a camera source."""
+    with _video_feed_pool_lock:
+        key = str(source)
+        if key not in _video_feed_pools or not _video_feed_pools[key].cap.isOpened():
+            _video_feed_pools[key] = _SharedCapture(source)
+        capture = _video_feed_pools[key]
+        capture.add_reader()
+        return capture
+
+
 def _open_stream_with_fallback(stream_source):
     capture = cv2.VideoCapture(stream_source)
     if capture.isOpened():
@@ -475,25 +539,39 @@ def video_feed(camera_id):
 
     stream_source = _parse_camera_source(camera.stream_url or '')
 
+    # Check viewer limit
+    with _video_feed_pool_lock:
+        if video_feed_viewers[camera_id] >= MAX_VIDEO_FEED_VIEWERS:
+            return jsonify({'error': 'Too many viewers for this camera'}), 429
+        video_feed_viewers[camera_id] += 1
+
     def generate_frames():
-        capture, using_fallback = _open_stream_with_fallback(stream_source)
+        # Use shared capture to avoid duplicate OpenCV connections
+        shared_cap = _get_shared_capture(stream_source)
 
         try:
-            if not capture.isOpened():
+            if not shared_cap.cap.isOpened():
                 return
 
+            frame_counter = 0
+            feed_skip = int(os.getenv('VIDEO_FEED_SKIP', '3'))  # Skip frames in feed
+
             while True:
-                ok_read, frame = capture.read()
-                if not ok_read:
-                    # Loop local demo video to provide deterministic output.
-                    if using_fallback:
-                        capture.set(cv2.CAP_PROP_POS_FRAMES, 0)
-                        continue
-                    break
+                frame = shared_cap.get_frame()
+                if frame is None:
+                    time.sleep(0.1)
+                    continue
+                
+                frame_counter += 1
+                if frame_counter % feed_skip != 0:
+                    time.sleep(0.03)
+                    continue
+
+                output_frame = frame.copy()  # Copy to avoid mutation of shared buffer
 
                 if ENABLE_DETECTION and detection_service is not None:
                     try:
-                        detections = detection_service.detect_single_frame(frame)
+                        detections = detection_service.detect_single_frame(output_frame)
                     except Exception:
                         detections = []
 
@@ -508,10 +586,9 @@ def video_feed(camera_id):
                         confidence_pct = int(round(conf * 100))
                         caption = f'{label} {confidence_pct}%'
 
-                        cv2.rectangle(frame, (x1, y1), (x2, y2), (0, 0, 255), 2)
-                        # Annotation only — incident creation handled by _detection_loop
+                        cv2.rectangle(output_frame, (x1, y1), (x2, y2), (0, 0, 255), 2)
                         cv2.putText(
-                            frame,
+                            output_frame,
                             caption,
                             (x1, max(y1 - 10, 20)),
                             cv2.FONT_HERSHEY_SIMPLEX,
@@ -521,7 +598,8 @@ def video_feed(camera_id):
                             cv2.LINE_AA,
                         )
 
-                encoded, buffer = cv2.imencode('.jpg', frame)
+                encoded, buffer = cv2.imencode('.jpg', output_frame)
+                del output_frame
                 if not encoded:
                     continue
 
@@ -533,7 +611,9 @@ def video_feed(camera_id):
         except (GeneratorExit, BrokenPipeError, ConnectionResetError):
             return
         finally:
-            capture.release()
+            shared_cap.remove_reader()
+            with _video_feed_pool_lock:
+                video_feed_viewers[camera_id] = max(0, video_feed_viewers.get(camera_id, 0) - 1)
 
     return Response(generate_frames(), mimetype='multipart/x-mixed-replace; boundary=frame')
 
@@ -1176,9 +1256,145 @@ def simulate_weapon_alert():
         'guards_notified': len(guards)
     }), 201
 
+# Resource status endpoint for monitoring
+def get_health_info():
+    """Get system health info for the /api/health endpoint."""
+    import psutil as _ps
+    mem = _ps.virtual_memory()
+    process = _ps.Process(os.getpid())
+    active_cameras = 0
+    if detection_service:
+        with detection_service._lock:
+            active_cameras = len(detection_service.camera_threads)
+    return {
+        'status': 'ok',
+        'active_cameras': active_cameras,
+        'memory_usage_mb': round(_ps.Process(os.getpid()).memory_info().rss / (1024 * 1024), 1),
+        'memory_total_mb': round(mem.total / (1024 * 1024), 1),
+        'memory_percent': round(mem.percent, 1),
+        'cpu_percent': round(process.cpu_percent(interval=0.1), 1),
+        'detection_enabled': detection_service is not None,
+        'profile': QORGAN_PROFILE or 'dev',
+    }
+
+
 # Set detection callback
 if detection_service is not None:
     detection_service.set_detection_callback(on_weapon_detected)
+    detection_service.start_resource_monitoring()
+
+
+@app.route('/api/resources', methods=['GET'])
+def get_resources():
+    """Get resource utilization and system status."""
+    user = get_current_user()
+    if not user:
+        return jsonify({'error': 'Unauthorized'}), 401
+    
+    info = {}
+    if detection_service:
+        info = detection_service.get_resource_status()
+    
+    import psutil as _ps
+    mem = _ps.virtual_memory()
+    process = _ps.Process(os.getpid())
+    info.update({
+        'system_memory_mb': round(_ps.Process(os.getpid()).memory_info().rss / (1024 * 1024), 1),
+        'system_total_mb': round(mem.total / (1024 * 1024), 1),
+        'system_memory_percent': round(mem.percent, 1),
+        'cpu_percent': round(process.cpu_percent(interval=0.1), 1),
+    })
+    return jsonify(info)
+
+
+@app.route('/api/cameras/<int:camera_id>/start', methods=['POST'])
+def start_camera_batch():
+    """Start detection on a specific camera (rate limited version)."""
+    user = get_current_user()
+    if not user:
+        return jsonify({'error': 'Unauthorized'}), 401
+    if user.role != 'guard':
+        return jsonify({'error': 'Only guards can start cameras'}), 403
+
+    camera = Camera.query.filter_by(id=int(camera_id), school_code=user.school_code).first()
+    if not camera:
+        return jsonify({'error': 'Camera not found'}), 404
+
+    if not detection_service:
+        return jsonify({'error': 'Detection service not initialized'}), 500
+
+    # Check if already running
+    with detection_service._lock:
+        if str(camera.id) in detection_service.camera_threads:
+            return jsonify({'error': 'Camera already running', 'camera_id': camera.id}), 400
+
+    stream_source = _parse_camera_source(camera.stream_url or '')
+    result = detection_service.start_camera_detection(
+        camera_id=str(camera.id),
+        camera_source=stream_source,
+        camera_location=camera.location or camera.name or 'Unknown',
+        school_code=camera.school_code
+    )
+    
+    if result is False:
+        return jsonify({'error': 'Camera limit reached or low memory. Try stopping another camera first.'}), 429
+
+    return jsonify({
+        'message': f'Camera {camera.name} started',
+        'camera_id': camera.id,
+        'location': camera.location
+    })
+
+
+@app.route('/api/cameras/batch-start', methods=['POST'])
+def batch_start_cameras():
+    """Start detection on multiple cameras at once. Body: {"camera_ids": [1, 2, 3]}"""
+    user = get_current_user()
+    if not user or user.role != 'guard':
+        return jsonify({'error': 'Unauthorized'}), 401
+    
+    data = request.get_json() or {}
+    camera_ids = data.get('camera_ids', [])
+    if not isinstance(camera_ids, list):
+        return jsonify({'error': 'camera_ids must be a list'}), 400
+    
+    results = []
+    for cid in camera_ids[:30]:  # Hard limit
+        camera = Camera.query.filter_by(id=int(cid), school_code=user.school_code).first()
+        if not camera:
+            results.append({'camera_id': cid, 'status': 'not_found'})
+            continue
+        
+        with detection_service._lock:
+            already_running = str(camera.id) in detection_service.camera_threads
+        if already_running:
+            results.append({'camera_id': cid, 'status': 'already_running'})
+            continue
+        
+        stream_source = _parse_camera_source(camera.stream_url or '')
+        result = detection_service.start_camera_detection(
+            camera_id=str(camera.id),
+            camera_source=stream_source,
+            camera_location=camera.location or camera.name or 'Unknown',
+            school_code=camera.school_code
+        )
+        results.append({'camera_id': cid, 'status': 'started' if result else 'rejected'})
+    
+    return jsonify({'results': results, 'total': len(results)})
+
+
+@app.route('/api/cameras/stop-all', methods=['POST'])
+def stop_all_cameras():
+    """Stop all running cameras."""
+    user = get_current_user()
+    if not user or user.role != 'guard':
+        return jsonify({'error': 'Unauthorized'}), 401
+    
+    if detection_service:
+        detection_service.stop_all_cameras()
+    
+    return jsonify({'message': 'All cameras stopped'})
+
 
 # Initialize database and optionally start detection on cameras
 with app.app_context():
@@ -1215,16 +1431,37 @@ with app.app_context():
             ))
             db.session.commit()
     
-    # Cameras are started individually via API endpoints:
-    #   POST /api/cameras/<id>/start   — start detection on a specific camera
-    #   POST /api/cameras/<id>/stop    — stop detection on a specific camera
-    #   GET  /api/cameras/status       — list all cameras with running status
+    # Cameras are started individually via API endpoints.
     # No cameras are auto-started at boot. The guard selects which cameras to monitor.
     if detection_service is not None:
-        print('Detection service ready. Start cameras individually via POST /api/cameras/<id>/start')
+        print('[Qorgan] Detection service ready. Start cameras individually via POST /api/cameras/<id>/start')
+        print(f'[Qorgan] Max cameras: {detection_service.max_active_cameras}, Frame skip: {detection_service.frame_skip}')
     else:
-        print('Detection disabled (set ENABLE_DETECTION=1 or QORGAN_PROFILE=centers to enable).')
+        print('[Qorgan] Detection disabled (set ENABLE_DETECTION=1 or QORGAN_PROFILE=centers to enable).')
+
+
+def _graceful_shutdown(signum, frame):
+    """Graceful shutdown handler"""
+    print('\n[Qorgan] Shutting down gracefully...')
+    if detection_service:
+        detection_service.stop_all_cameras()
+        detection_service.stop_resource_monitoring()
+    # Release shared captures
+    with _video_feed_pool_lock:
+        for cap in _video_feed_pools.values():
+            cap.release()
+        _video_feed_pools.clear()
+    print('[Qorgan] All resources released. Goodbye.')
+    import sys
+    sys.exit(0)
+
 
 if __name__ == '__main__':
+    import signal
+    signal.signal(signal.SIGINT, _graceful_shutdown)
+    signal.signal(signal.SIGTERM, _graceful_shutdown)
+    
     debug_mode = APP_ENV != 'production' and os.getenv('FLASK_DEBUG', '0') == '1'
-    port = int(os.getenv('PORT', 5001))     socketio.run(app, host='0.0.0.0', port=port, debug=debug_mode, allow_unsafe_werkzeug=debug_mode)
+    port = int(os.getenv('PORT', 5001))
+    print(f'[Qorgan] Starting server on 0.0.0.0:{port}')
+    socketio.run(app, host='0.0.0.0', port=port, debug=debug_mode, allow_unsafe_werkzeug=debug_mode)
