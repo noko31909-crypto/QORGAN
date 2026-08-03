@@ -28,6 +28,24 @@ cd QORGAN
 
 ---
 
+### 🪟 Если у вас Windows:
+
+Если в НИШ используется ПК на Windows, установите **Python 3.10+** и **Node.js 18+** с официальных сайтов. Затем используйте следующие команды в **PowerShell** или **Command Prompt**:
+
+```powershell
+# 1. Скачиваем код
+git clone https://github.com/noko31909-crypto/QORGAN.git
+cd QORGAN
+
+# 2. Устанавливаем Python зависимости
+pip install -r apps/backend/requirements.txt
+
+# 3. Устанавливаем Node.js зависимости
+npm install --prefix apps/web
+```
+
+---
+
 ## Шаг 3: Настройка переменных
 
 Создайте файл настроек. Мы используем режим для учебных центров.
@@ -68,6 +86,8 @@ DETECTION_FRAME_HEIGHT=480
 ```bash
 ./scripts/start_centers.sh
 ```
+
+*(Если на Windows: `set QORGAN_PROFILE=centers && python apps/backend/app.py`)*
 
 Сервер запустится на порту `5001`.
 
